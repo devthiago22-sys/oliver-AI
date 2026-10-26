@@ -1,0 +1,36 @@
+name: Atualizar histórico de queimadas
+
+# Recalcula a média de focos por mês de cada município (base da sinalização de 1 a 3 meses).
+# Roda sozinho todo ano em 20 de fevereiro (o INPE costuma publicar o arquivo do ano anterior
+# no começo do ano) e pode ser disparado à mão em Actions > "Atualizar histórico de queimadas".
+on:
+  schedule:
+    - cron: '23 9 20 2 *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  historico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Baixar arquivos anuais do INPE e calcular médias mensais
+        run: python coletor/climatologia.py
+
+      - name: Salvar no repositório
+        run: |
+          git config user.name "oliver-coletor[bot]"
+          git config user.email "oliver-coletor@users.noreply.github.com"
+          git add oliver/climatologia_ma.json
+          git diff --cached --quiet && echo "Sem mudanças" && exit 0
+          git commit -m "Atualiza histórico mensal de focos do Maranhão (INPE)"
+          git pull --rebase -q origin main
+          git push -q origin HEAD:main
