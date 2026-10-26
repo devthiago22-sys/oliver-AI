@@ -29,6 +29,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 UF_MA = 21
+DIAS_HISTORICO = 7
 BRT = timezone(timedelta(hours=-3))
 SAIDA = os.environ.get('OLIVER_SAIDA', os.path.join(os.path.dirname(__file__), '..', 'saida', 'maranhao.json'))
 DADOS_ANTERIORES = os.environ.get(
@@ -151,7 +152,9 @@ def coletar_focos(base, agora):
     por_nome = {normalizar(m['nome']): cod for cod, m in base.items()}
     focos = []
     erros = []
-    for dia in (agora - timedelta(days=1), agora):
+    dias = [(agora - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(DIAS_HISTORICO - 1, -1, -1)]
+    for dia_txt in dias:
+        dia = datetime.strptime(dia_txt, '%Y-%m-%d')
         url = INPE_FOCOS.format(data=dia.strftime('%Y%m%d'))
         try:
             texto = baixar(url, timeout=90).decode('utf-8', 'replace')
@@ -178,12 +181,25 @@ def coletar_focos(base, agora):
                 'data_hora_utc': row.get('data_hora_gmt'), 'satelite': row.get('satelite'),
                 'municipio': cod, 'dias_sem_chuva': num('numero_dias_sem_chuva'),
                 'precipitacao': num('precipitacao'), 'risco_fogo': num('risco_fogo'), 'frp': num('frp'),
-                'bioma': row.get('bioma'),
+                'bioma': row.get('bioma'), 'arquivo': dia_txt,
             })
     # O satélite geoestacionário (GOES) detecta o mesmo fogo a cada 10 minutos. Para contar
     # focos como uma pessoa entende, junta as detecções no mesmo local (~1 km) e guarda a
     # mais recente, com o número de detecções e os satélites que viram o fogo.
     unicos = {f['id']: f for f in focos if f['id']}
+
+    # Histórico diário (7 dias): locais distintos com fogo por município e por dia.
+    celulas = {}
+    for f in unicos.values():
+        celulas.setdefault((f['municipio'], f['arquivo']), set()).add((round(f['lat'], 2), round(f['lon'], 2)))
+    historico = {}
+    for (cod, dia_txt), locais_dia in celulas.items():
+        historico.setdefault(cod, [0] * len(dias))[dias.index(dia_txt)] = len(locais_dia)
+    total_dia = [sum(h[i] for h in historico.values()) for i in range(len(dias))]
+    log(f'INPE histórico: focos por dia no MA {dict(zip(dias, total_dia))}')
+
+    # Lista detalhada: só as últimas 48 h (arquivos de ontem e de hoje).
+    unicos = {k: f for k, f in unicos.items() if f['arquivo'] >= dias[-2]}
     deteccoes = len(unicos)
     locais = {}
     for f in sorted(unicos.values(), key=lambda f: f['data_hora_utc'] or ''):
@@ -199,7 +215,10 @@ def coletar_focos(base, agora):
     focos = sorted(locais.values(), key=lambda f: f['data_hora_utc'] or '', reverse=True)
     for f in focos:
         f['satelite'] = ', '.join(s for s in f.pop('satelites') if s)
-    log_fontes['inpe_focos'] = {'ok': len(erros) < 2, 'erros': erros, 'focos_ma_48h': len(focos), 'deteccoes_48h': deteccoes}
+    for f in focos:
+        f.pop('arquivo', None)
+    hoje_ok = not any(e.startswith(dias[-1]) or e.startswith(dias[-2]) for e in erros)
+    log_fontes['inpe_focos'] = {'ok': hoje_ok, 'erros': erros, 'focos_ma_48h': len(focos), 'deteccoes_48h': deteccoes}
     log(f'INPE: {len(focos)} focos (locais distintos) e {deteccoes} detecções no Maranhão em 48 h', erros or '')
 
     limite_24h = (agora - timedelta(hours=24)).astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
@@ -215,7 +234,7 @@ def coletar_focos(base, agora):
         if f['dias_sem_chuva'] is not None:
             r['dias_sem_chuva_inpe'] = max(r['dias_sem_chuva_inpe'] or 0, f['dias_sem_chuva'])
         r['ultimo_utc'] = max(r['ultimo_utc'] or '', f['data_hora_utc'] or '')
-    return focos, resumo
+    return focos, resumo, {'dias': dias, 'por_municipio': historico, 'total_estado': total_dia}
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +362,9 @@ def coletar_open_meteo(base):
                 if (p or 0) >= 5.0:
                     break
                 n += 1
-            secos[cod] = {'dias': n, 'chuva_30d': round(sum(p or 0 for p in diarios[-30:]), 1)}
+            datas = b.get('daily', {}).get('time', [])[:-1]
+            secos[cod] = {'dias': n, 'chuva_30d': round(sum(p or 0 for p in diarios[-30:]), 1),
+                          'chuva_7d': [round(p or 0, 1) for p in diarios[-7:]], 'datas_7d': datas[-7:]}
         time.sleep(1)
     log_fontes['open_meteo'] = {'ok': True, 'municipios': len(atual)}
     log(f'Open-Meteo: {len(atual)} municípios')
@@ -360,7 +381,7 @@ def main():
         log('Sem coleta anterior (normal na primeira vez):', e)
 
     base = carregar_municipios(anteriores)
-    focos, resumo_focos = coletar_focos(base, agora)
+    focos, resumo_focos, historico = coletar_focos(base, agora)
     estacoes = coletar_inmet_estacoes(agora)
     avisos = coletar_inmet_avisos(base)
     try:
@@ -399,7 +420,10 @@ def main():
             clima['fonte_dias_sem_chuva'] = 'Open-Meteo'
         if cod in om_secos:
             clima['chuva_30d'] = om_secos[cod]['chuva_30d']
+            clima['chuva_7d'] = om_secos[cod]['chuva_7d']
+            clima['datas_chuva_7d'] = om_secos[cod]['datas_7d']
         item['clima'] = clima
+        item['historico_focos'] = historico['por_municipio'].get(cod, [0] * len(historico['dias']))
         item['focos'] = rf or {'h24': 0, 'h48': 0, 'risco_inpe_max': None, 'dias_sem_chuva_inpe': None, 'ultimo_utc': None}
         item['avisos'] = avisos.get(cod, [])
         municipios[cod] = item
@@ -410,6 +434,7 @@ def main():
         'fontes': log_fontes,
         'municipios': municipios,
         'focos': focos,
+        'historico_focos': {'dias': historico['dias'], 'total_estado': historico['total_estado']},
         'estacoes_inmet': [{k: e[k] for k in ('codigo', 'nome', 'uf', 'lat', 'lon')} for e in estacoes],
     }
     os.makedirs(os.path.dirname(os.path.abspath(SAIDA)), exist_ok=True)
