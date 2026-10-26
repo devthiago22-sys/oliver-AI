@@ -374,6 +374,7 @@
     if (RISK_ORDER.includes(row.risk)) return row.risk;
     const e = row.explanation || "";
     if (/Informado por você/.test(e)) return "Você";
+    if (/Calculada pelo Oliver/.test(e)) return "Calculado";
     if (/INPE|INMET|IBGE/.test(e)) return "Oficial";
     if (/Open-Meteo/.test(e)) return "Complementar";
     return "Recebido";
@@ -564,7 +565,7 @@
         </tbody></table>
         <h3>Conclusão do Oliver</h3>
         <p>${esc(data.reply)}</p>`}
-        ${focos.length && d !== "panorama" ? `
+        ${focos.length && d === "fire" ? `
           <h3>Focos de calor próximos (até 60 km, últimas 48 h · INPE)</h3>
           <table class="data"><thead><tr><th>Município</th><th>Data e hora</th><th>Satélite</th><th>Coordenadas</th></tr></thead><tbody>
           ${focos.map((f) => `<tr><td>${esc(f.municipio)}</td><td>${esc(utcToBr(f.data))}</td><td>${esc(f.satelite || "-")}</td><td>${f.lat.toFixed(3)}, ${f.lon.toFixed(3)}</td></tr>`).join("")}

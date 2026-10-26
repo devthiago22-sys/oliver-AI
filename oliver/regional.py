@@ -187,7 +187,7 @@ def analise_fogo(cod, dados):
          'explanation': _fonte_txt(c.get('fonte_vento', '-'), estacao)},
         {'metric': 'Dias seguidos sem chuva relevante', 'value': fmt(c.get('dias_sem_chuva'), 0), 'risk': 'Indeterminado',
          'explanation': _fonte_txt(c.get('fonte_dias_sem_chuva', '-'), ' · dias com menos de 5 mm de chuva')},
-        {'metric': 'Chuva nos últimos 30 dias', 'value': f"{fmt(c.get('chuva_30d'))} mm", 'risk': 'Indeterminado',
+        {'metric': 'Chuva nos últimos 30 dias', 'value': f"{fmt(c.get('chuva_30d'))} mm" if c.get('chuva_30d') is not None else 'sem dado', 'risk': 'Indeterminado',
          'explanation': _fonte_txt('Open-Meteo')},
         {'metric': 'Secura estimada da vegetação', 'value': f"{fmt(e['secura'], 0)} %", 'risk': 'Indeterminado',
          'explanation': 'Calculada pelo Oliver a partir dos dias sem chuva e da chuva dos últimos 30 dias.'},

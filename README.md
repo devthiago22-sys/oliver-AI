@@ -1,6 +1,35 @@
 # Oliver · Triagem de risco de fogo e alagamento
 
-Protótipo de TCC: uma rede neural (MLP) que estima o risco de propagação de fogo e de alagamento predial, com site, login e relatório em PDF.
+Protótipo de TCC: uma rede neural (MLP) que estima o risco de queimadas e de alagamento nos 217 municípios do Maranhão, usando dados do INPE e do INMET. Tem site, login e relatório em PDF.
+
+## Como funciona
+
+A pessoa só diz a cidade (e, para alagamento, responde três perguntas simples sobre o imóvel). O Oliver busca os dados mais recentes, passa pela rede neural e responde com o risco, um mapa dos focos de calor e um relatório em PDF com as fontes.
+
+```
+GitHub Actions (de hora em hora)          PythonAnywhere (site)
+coletor/coletar.py                         app.py + oliver/regional.py
+  INPE · focos de calor  ─┐                  lê maranhao.json do branch "dados"
+  INMET · avisos         ─┼─► maranhao.json ─► rede neural ─► resposta + PDF
+  Open-Meteo · clima     ─┘   (branch dados)
+```
+
+O site não acessa o INPE e o INMET diretamente porque o plano gratuito do PythonAnywhere só libera alguns endereços (o GitHub está entre eles).
+
+### Fontes de dados
+
+| Dado | Fonte |
+|---|---|
+| Focos de calor (48 h), agrupados por local | INPE · Programa Queimadas (BDQueimadas), arquivo diário |
+| Avisos meteorológicos ativos | INMET (apiprevmet3) |
+| Vento e umidade | Estação automática do INMET mais próxima (até 80 km) quando a API responde; senão Open-Meteo |
+| Chuva últimas/próximas 24 h, chuva de 30 dias, dias sem chuva relevante | Open-Meteo |
+| Municípios, códigos e coordenadas | IBGE (lista pública de municípios) |
+| Declividade em torno da sede | Open-Meteo (Copernicus DEM) |
+
+A API de estações do INMET passou a exigir token. Se você conseguir um, cadastre em **Settings > Secrets and variables > Actions** com o nome `INMET_TOKEN` e o coletor passa a usá-lo.
+
+Para rodar o coletor à mão: aba **Actions > Coletar dados do Maranhão > Run workflow**.
 
 ## Como rodar
 
@@ -24,7 +53,10 @@ Para parar o servidor, aperte `Ctrl+C` no terminal.
 ```
 app.py              servidor web (Flask): páginas, contas e API do Oliver
 oliver/neural.py    rede neural MLP, treino com dados sintéticos e pesos salvos
-oliver/chat.py      conversa: extrai os dados das mensagens e chama a rede
+oliver/regional.py  conversa por município do Maranhão com os dados coletados
+oliver/chat.py      entrada da API; modo "Simulação" com valores técnicos
+coletor/coletar.py  coletor horário (INPE, INMET, Open-Meteo, IBGE)
+.github/workflows/  agenda do coletor no GitHub Actions
 oliver/auth.py      contas (SQLite, senhas com hash) e recuperação de senha
 oliver/pesos.json   pesos já treinados (apague para treinar de novo)
 static/login.html   tela de login, criar conta, recuperar e redefinir senha
