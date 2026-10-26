@@ -139,7 +139,8 @@ def _nice_max(v):
 
 def grafico(g, largura=170 * mm, altura=62 * mm):
     """Colunas por dia; duas séries viram colunas empilhadas. Previsão de chuva em coluna listrada."""
-    dias = list(g.get('dias') or [])[:14]
+    dias = list(g.get('dias') or g.get('rotulos') or [])[:14]
+    destaque = set(g.get('destaque') or [])
     series = [s for s in (g.get('series') or [])[:2]]
     if not dias or not series:
         return None
@@ -203,13 +204,15 @@ def grafico(g, largura=170 * mm, altura=62 * mm):
                 continue
             base = y(acum) + (0.6 if acum > 0 else 0)
             acum += v
-            segs.append((base, y(acum), COR_SERIE.get(s.get('cor'), INK)))
+            apagado = destaque and i not in destaque
+            segs.append((base, y(acum), colors.HexColor('#d9ccbf') if apagado else COR_SERIE.get(s.get('cor'), INK)))
         for k, (base, topo, cor) in enumerate(segs):
             coluna(x(i), base, topo, cor, k == len(segs) - 1)
-        if (i == pico or i == n - 1) and totais[i] > 0:
+        rotular = (i in destaque) if destaque else (i == pico or i == n - 1)
+        if rotular and totais[i] > 0:
             d.add(String(x(i), y(totais[i]) + 1.5 * mm, _fmt(totais[i], unidade), fontName='Helvetica-Bold', fontSize=8,
                          fillColor=INK, textAnchor='middle'))
-        d.add(String(x(i), mb - 4.5 * mm, _dia(dia, i, n, 'focos' if tipo != 'chuva' else 'chuva'), fontName='Helvetica',
+        d.add(String(x(i), mb - 4.5 * mm, str(dia) if tipo == 'mensal' else _dia(dia, i, n, 'focos' if tipo != 'chuva' else 'chuva'), fontName='Helvetica',
                      fontSize=7, fillColor=MUTED, textAnchor='middle'))
     if previsao is not None:
         cor = COR_SERIE['agua-1']
@@ -230,6 +233,8 @@ def grafico(g, largura=170 * mm, altura=62 * mm):
 
 
 def legenda_grafico(g):
+    if g.get('tipo') == 'mensal':
+        return f"Média de focos de queimada em cada mês do ano; em destaque, os próximos 3 meses. Fonte: {g.get('fonte', '')}."
     if g.get('tipo') == 'chuva':
         return f"Milímetros de chuva por dia nos últimos 7 dias e a previsão para as próximas 24 horas (coluna listrada). Fonte: {g.get('fonte', '')}."
     viz = g.get('vizinhos') or []
@@ -256,6 +261,37 @@ def tabela(cabecalho, linhas, larguras, negrito_col0=True):
         ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
     ]))
     return t
+
+
+COR_TEMPORADA = {'Baixa': RISCO['Baixo'], 'Média': RISCO['Moderado'], 'Alta': RISCO['Alto']}
+
+
+def bloco_sazonal(sz, onde, largura):
+    """Seção "Próximos 3 meses": tabela + gráfico da média mensal."""
+    if not sz:
+        return []
+    out = [Paragraph('Próximos 3 meses', S['h3'])]
+    if _num(sz.get('total_medio_ano')) < 1:
+        return out + [_p(f"Pelo histórico do INPE ({sz.get('periodo')}), quase não há focos de queimada {onde} em nenhum mês do ano.")]
+    picos = sz.get('meses_pico') or ['', '']
+    out.append(_p(f"O que costuma acontecer {onde} nos próximos meses, pelo histórico do INPE de {sz.get('periodo')}. "
+                  f"Os meses de mais queimadas costumam ser {picos[0]} e {picos[1]}. Isto é o padrão dos anos anteriores, "
+                  f"não uma previsão do tempo."))
+    linhas = []
+    for pm in sz.get('proximos') or []:
+        cor = COR_TEMPORADA.get(pm.get('temporada'), INK).hexval()[2:]
+        linhas.append([f"{str(pm.get('mes', '')).capitalize()} de {pm.get('ano')}", f"{_num(pm.get('media')):.0f}",
+                       f"{pm.get('anos_com_foco')} de {pm.get('anos')} anos ({pm.get('chance')}%)",
+                       f"{pm.get('min')} a {pm.get('max')}",
+                       Paragraph(f'<font color="#{cor}"><b>{_t(pm.get("temporada"))}</b></font>', S['cell'])])
+    out.append(tabela(['Mês', 'Média de focos', 'Teve fogo em', 'Menor e maior ano', 'Temporada'], linhas,
+                      [34 * mm, 26 * mm, 44 * mm, 34 * mm, largura - 138 * mm]))
+    g = sz.get('grafico')
+    if g:
+        dr = grafico(g, largura, 52 * mm)
+        if dr:
+            out += [Spacer(1, 2 * mm), dr, _p(legenda_grafico(g), 'small')]
+    return [KeepTogether(out)]
 
 
 def _nivel_par(nivel):
@@ -357,6 +393,7 @@ def gerar_pdf(analises, usuario=None):
                                      f.get('satelite') or '-', f"{_num(f.get('lat')):.3f}, {_num(f.get('lon')):.3f}"] for f in maiores[:5]],
                                    [44 * mm, 28 * mm, 26 * mm, 36 * mm, largura - 134 * mm]))
                 hist.append(_p('A potência radiativa do fogo (FRP) mede a energia liberada: quanto maior, mais forte o incêndio.', 'small'))
+            hist += bloco_sazonal(reg.get('sazonal'), 'no Maranhão', largura)
             c_ = reg.get('contagem') or {}
             hist.append(_p(f"Risco de o fogo se espalhar, segundo a rede neural do Oliver: {c_.get('Alto', 0)} municípios com risco alto, "
                            f"{c_.get('Moderado', 0)} moderado e {c_.get('Baixo', 0)} baixo."))
@@ -383,6 +420,8 @@ def gerar_pdf(analises, usuario=None):
                 conf.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), PAPER), ('TOPPADDING', (0, 0), (-1, -1), 5),
                                           ('BOTTOMPADDING', (0, 0), (-1, -1), 5)]))
                 hist += [Spacer(1, 3 * mm), conf]
+            if dom == 'fire':
+                hist += bloco_sazonal(reg.get('sazonal'), f"em {str(r.get('location', '')).replace(' – MA', '')}", largura)
             linhas = [[f.get('metric'), _valor(f), f.get('explanation', '')] for f in (r.get('findings') or [])
                       if not str(f.get('metric', '')).startswith(('Probabilidade', 'Risco estimado'))]
             hist.append(Paragraph('Dados usados e suas fontes' if reg else 'Dados informados', S['h3']))

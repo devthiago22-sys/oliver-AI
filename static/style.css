@@ -1,5 +1,6 @@
 :root {
   --fogo-1: #a8321a; --fogo-2: #c88a3c; --agua-1: #2f7fb8;
+  --chart-soft: #d9ccbf;
   --chart-grid: #e2e7e2; --chart-axis: #9aa69f; --chart-muted: #56655f; --chart-ink: #1d2b2a; --chart-surface: #f8f9f6;
   --paper: #edf0ea;
   --surface: #f8f9f6;
@@ -22,6 +23,7 @@ body[data-domain="flood"] { --accent: #1e5c86; --accent-soft: #d6e4ee; }
 @media (prefers-color-scheme: dark) {
   :root {
     --fogo-1: #d4733f; --fogo-2: #a33f20; --agua-1: #4f9bd4;
+    --chart-soft: #4a3f38;
     --chart-grid: #2a3633; --chart-axis: #4a5955; --chart-muted: #9daca6; --chart-ink: #e6ece8; --chart-surface: #1c2523;
     --paper: #141b1a; --surface: #1c2523; --ink: #e6ece8; --muted: #9daca6; --line: #2f3c39;
     --accent: #8fb3a8; --accent-soft: #24302d;
@@ -242,6 +244,19 @@ td small { display: block; color: var(--muted); }
 .sources-time { margin: 0 0 6px; color: var(--muted); font-size: .9rem; }
 .sources ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: .93rem; }
 .sources a { color: var(--accent); }
+
+/* ---------- Próximos 3 meses ---------- */
+.season-lead { margin: 0 0 12px; color: var(--muted); font-size: .93rem; }
+.season-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+@media (max-width: 520px) { .season-cards { grid-template-columns: 1fr; } }
+.season-card { display: flex; flex-direction: column; gap: 3px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.season-month { font-weight: 700; }
+.season-level { align-self: flex-start; font-size: .8rem; font-weight: 700; padding: 2px 9px; border-radius: 999px; color: #fff; background: var(--risk-baixo); }
+.season-level[data-level="Média"] { background: var(--risk-moderado); }
+.season-level[data-level="Alta"] { background: var(--risk-alto); }
+.season-num { font-family: var(--font-display); font-size: 1.9rem; line-height: 1.1; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.season-unit, .season-range { color: var(--muted); font-size: .83rem; }
+.season-chance { font-size: .88rem; }
 
 /* ---------- Focos mais intensos ---------- */
 .big-fires ol { margin: 0; padding-left: 22px; display: grid; gap: 4px; font-size: .95rem; font-variant-numeric: tabular-nums; }

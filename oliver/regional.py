@@ -7,6 +7,7 @@ neural e devolve a análise.
 """
 import json
 import math
+from datetime import datetime, timedelta, timezone
 import os
 import threading
 import time
@@ -18,6 +19,7 @@ from .neural import NEURAL_AI
 DADOS_URL = os.environ.get('OLIVER_DADOS_URL', 'https://raw.githubusercontent.com/devthiago22-sys/oliver-AI/dados/maranhao.json')
 DADOS_LOCAL = os.environ.get('OLIVER_DADOS_LOCAL', os.path.join(os.path.dirname(os.path.dirname(__file__)), 'saida', 'maranhao.json'))
 CACHE_SEGUNDOS = 600
+BRT = timezone(timedelta(hours=-3))
 
 FONTES = {
     'INPE': ('INPE · Programa Queimadas (BDQueimadas)', 'https://terrabrasilis.dpi.inpe.br/queimadas/bdqueimadas/'),
@@ -259,13 +261,17 @@ def analise_fogo(cod, dados):
              f"e {fmt(c.get('chuva_30d'), 0)} mm de chuva nos últimos 30 dias (vegetação {fmt(e['secura'], 0)} % seca).")
     if f.get('h24') and pred['level'] == 'Baixo':
         reply += ' Mesmo com risco baixo de o fogo se espalhar, há focos ativos na região: não é hora de queimar nada.'
+    saz = sinalizacao(cod)
+    reply += texto_sinalizacao(saz, f"em {m['nome']}")
     acoes = ['Não use fogo para limpar terreno ou queimar lixo, principalmente com o tempo seco.']
     if f.get('h24'):
         acoes.insert(0, 'Se vir fogo ou fumaça perto de casas ou da mata, ligue 193 (Bombeiros).')
     if pred['level'] == 'Alto':
         acoes.append('Mantenha aceiros limpos em volta de roças, cercas e casas.')
     acoes.append('Acompanhe os alertas oficiais da Defesa Civil (199) e do INPE.')
-    return _resultado('fire', m, dados, pred, rows, reply, acoes, fontes=['INPE', c.get('fonte_vento'), c.get('fonte_dias_sem_chuva'), 'IBGE'])
+    r = _resultado('fire', m, dados, pred, rows, reply, acoes, fontes=['INPE', c.get('fonte_vento'), c.get('fonte_dias_sem_chuva'), 'IBGE'])
+    r['regional']['sazonal'] = saz
+    return r
 
 
 IMOVEL = {'subsolo': ('Prédio com subsolo ou garagem subterrânea', 1.0),
@@ -326,6 +332,76 @@ def grafico_focos(m, dados):
             'series': [{'nome': m['nome'], 'valores': m['historico_focos'], 'cor': 'fogo-1'},
                        {'nome': 'Municípios vizinhos (até 60 km)', 'valores': vizinhos, 'cor': 'fogo-2'}],
             'vizinhos': sorted(nomes), 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas'}
+
+
+# ---------------------------------------------------------------------------
+# Sinalização de 1 a 3 meses (histórico mensal do INPE)
+# ---------------------------------------------------------------------------
+MESES = ('janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro',
+         'novembro', 'dezembro')
+CLIMA_PATH = os.path.join(os.path.dirname(__file__), 'climatologia_ma.json')
+_clima = {'dados': None, 'mtime': 0}
+
+
+def carregar_climatologia():
+    try:
+        mtime = os.path.getmtime(CLIMA_PATH)
+    except OSError:
+        return None
+    if _clima['dados'] is None or mtime != _clima['mtime']:
+        with open(CLIMA_PATH, encoding='utf-8') as f:
+            _clima.update(dados=json.load(f), mtime=mtime)
+    return _clima['dados']
+
+
+def sinalizacao(cod=None, hoje=None):
+    """Próximos 3 meses pelo histórico: média de focos, faixa, chance de haver fogo e força da temporada.
+
+    É a sazonalidade observada nos anos anteriores (não é uma previsão do tempo).
+    """
+    clima = carregar_climatologia()
+    if not clima:
+        return None
+    base = clima['estado'] if cod is None else clima['municipios'].get(cod)
+    if not base:
+        return None
+    hoje = hoje or datetime.now(BRT)
+    perfil = [m['media'] for m in base['meses']]
+    total = sum(perfil) or 1
+    n = len(clima['anos'])
+    pico = sorted(range(12), key=lambda i: -perfil[i])[:2]
+    proximos = []
+    for k in (1, 2, 3):
+        i = (hoje.month - 1 + k) % 12
+        ano = hoje.year + (hoje.month - 1 + k) // 12
+        m = base['meses'][i]
+        parte = m['media'] / total
+        nivel = 'Alta' if parte >= 0.15 else 'Média' if parte >= 0.07 else 'Baixa'
+        if total < 3:
+            nivel = 'Baixa'
+        proximos.append({'mes': MESES[i], 'indice_mes': i, 'ano': ano, 'media': m['media'], 'min': m['min'], 'max': m['max'],
+                         'anos_com_foco': m['anos_com_foco'], 'anos': n,
+                         'chance': round(100 * m['anos_com_foco'] / n), 'temporada': nivel})
+    return {
+        'periodo': f"{clima['anos'][0]}–{clima['anos'][-1]}", 'anos': n, 'fonte': clima.get('fonte', 'INPE'),
+        'perfil': perfil, 'mes_atual': hoje.month - 1, 'meses_pico': [MESES[i] for i in pico],
+        'total_medio_ano': round(sum(perfil), 1), 'proximos': proximos,
+        'grafico': {'tipo': 'mensal', 'rotulos': [x[:3] for x in MESES], 'destaque': [p['indice_mes'] for p in proximos],
+                    'unidade': 'focos', 'fonte': f"INPE · satélite de referência, média de {clima['anos'][0]} a {clima['anos'][-1]}",
+                    'series': [{'nome': 'Média de focos no mês', 'valores': perfil, 'cor': 'fogo-1'}]},
+    }
+
+
+def texto_sinalizacao(s, onde):
+    """onde já vem com a preposição: "em Balsas", "no Maranhão"."""
+    if not s:
+        return ''
+    if s['total_medio_ano'] < 1:
+        return f" Pelo histórico do INPE ({s['periodo']}), quase não há focos de queimada {onde} em nenhum mês do ano."
+    partes = [f"{p['mes']} costuma ter {fmt(p['media'], 0)} focos em média (houve algum foco em {p['anos_com_foco']} de "
+              f"{p['anos']} anos, {p['chance']}%; temporada {p['temporada'].lower()})" for p in s['proximos']]
+    return (f" Próximos 3 meses {onde}, pelo histórico do INPE de {s['periodo']}: " + '; '.join(partes) + '.'
+            f" Os meses de mais queimadas costumam ser {s['meses_pico'][0]} e {s['meses_pico'][1]}.")
 
 
 def grafico_chuva(m):
@@ -416,7 +492,8 @@ def panorama(dados):
                       f"{fmt(mf['frp'])} MW, em {_hora_br(mf['data'])}.")
     partes.append(f"Pela rede neural do Oliver, {contagem['Alto']} municípios estão com risco alto de o fogo se espalhar, "
                   f"{contagem['Moderado']} com risco moderado e {contagem['Baixo']} com risco baixo.")
-    reply = ' '.join(partes)
+    saz = sinalizacao(None)
+    reply = ' '.join(partes) + texto_sinalizacao(saz, 'no Maranhão')
 
     rows = [{'metric': f"{i + 1}º · {r['nome']}", 'value': f"{r['h24']} focos", 'risk': r['nivel'] if r['nivel'] in ('Baixo', 'Moderado', 'Alto') else 'Indeterminado',
              'explanation': f"48 h: {r['h48']} · 7 dias: {r['d7']} · risco de propagação {str(r['nivel']).lower()}. Fonte: INPE."}
@@ -437,6 +514,7 @@ def panorama(dados):
             'fontes': [{'nome': n, 'url': u} for n, u in (FONTES['INPE'], FONTES['Open-Meteo'], FONTES['IBGE'])],
             'contagem': contagem, 'focos_24h': total24, 'focos_48h': total48, 'focos_7d': total7,
             'ranking_focos': ranking, 'maiores_focos': maiores,
+            'sazonal': saz,
             'grafico': ({'tipo': 'focos', 'dias': hist['dias'], 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas',
                          'series': [{'nome': 'Maranhão', 'valores': total_dia, 'cor': 'fogo-1'}]} if hist else None),
         },
@@ -469,12 +547,19 @@ def _tem(t, palavras):
     return any(p in t for p in palavras)
 
 
+PALAVRAS_MESES = (' proximos meses', ' proximo mes', ' daqui a', ' meses', ' previsao', ' tendencia', ' temporada',
+                  ' janeiro', ' fevereiro', ' marco ', ' abril', ' maio', ' junho', ' julho', ' agosto', ' setembro',
+                  ' outubro', ' novembro', ' dezembro')
+
+
 def _intencao(t):
     if _tem(t, PALAVRAS_AMBOS):
         return 'both'
     fogo, agua = _tem(t, PALAVRAS_FOGO), _tem(t, PALAVRAS_AGUA)
     if fogo and agua:
         return 'both'
+    if not fogo and not agua and _tem(t, PALAVRAS_MESES):
+        return 'fire'
     return 'fire' if fogo else 'flood' if agua else None
 
 

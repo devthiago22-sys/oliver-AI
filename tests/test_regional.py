@@ -119,6 +119,11 @@ class RegionalTest(unittest.TestCase):
         self.assertTrue(r['complete'])
         self.assertEqual(r['reports'][0]['domain'], 'fire')
 
+    def test_proximos_meses_vira_analise_de_fogo(self):
+        r = self.conversa(['como vai ser nos próximos meses em barra do corda?'])
+        self.assertTrue(r['complete'])
+        self.assertEqual(r['reports'][0]['domain'], 'fire')
+
     def test_os_dois(self):
         r = self.conversa(['são luís', 'Os dois', 'apartamento', 'longe', 'não'])
         self.assertEqual([x['domain'] for x in r['reports']], ['fire', 'flood'])

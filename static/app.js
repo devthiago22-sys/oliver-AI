@@ -293,7 +293,7 @@
     setBadge("", "Aguardando cidade");
     setGauge(null);
     $("#gauge").hidden = false;
-    for (const id of ["#big-fires", "#chart-block", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
+    for (const id of ["#season-block", "#big-fires", "#chart-block", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
     $("#reset-btn").hidden = true;
   }
 
@@ -431,6 +431,7 @@
   };
 
   function diaCurto(iso, i, total, tipo) {
+    if (tipo === "mensal") return String(iso);
     if (tipo === "focos" && i === total - 1) return "hoje";
     const [, m, d] = String(iso).split("-");
     return d && m ? `${d}/${m}` : String(iso);
@@ -451,6 +452,7 @@
      com 2 px de folga na cor do fundo entre os segmentos e cantos arredondados só no topo. */
   function chartSvg(g) {
     const W = 640, H = 250, ml = 40, mr = 12, mt = g.series.length > 1 ? 40 : 22, mb = 30;
+    g = Object.assign({}, g, { dias: g.dias || g.rotulos || [] });
     const n = g.dias.length;
     const extra = g.tipo === "chuva" && g.previsao != null ? 1 : 0;
     const slots = n + extra;
@@ -487,14 +489,16 @@
         if (v <= 0) return;
         const base = y(acum) - (acum > 0 ? 2 : 0);
         acum += v;
-        segs.push({ base, topo: y(acum), cor: `var(--${s.cor})`, j });
+        const apagado = g.destaque && !g.destaque.includes(i);
+        segs.push({ base, topo: y(acum), cor: apagado ? "var(--chart-soft)" : `var(--${s.cor})`, j });
       });
       const dica = `${diaCurto(dia, i, n, g.tipo)}: ` + g.series.map((s) => `${s.nome} ${fmtNum(s.valores[i] || 0, g.unidade)} ${g.unidade}`).join(" · ");
       parts.push(`<g class="bar-group"><title>${esc(dica)}</title>` +
         `<rect x="${x(i) - band / 2}" y="${mt}" width="${band}" height="${H - mt - mb}" fill="transparent"/>` +
         segs.map((sg, k) => coluna(x(i), sg.base, sg.topo, sg.cor, k === segs.length - 1)).join("") + `</g>`);
       // rótulos só no pico e no último dia
-      if ((i === pico || i === n - 1) && totals[i] > 0) {
+      const rotular = g.destaque ? g.destaque.includes(i) : (i === pico || i === n - 1);
+      if (rotular && totals[i] > 0) {
         parts.push(`<text x="${x(i)}" y="${y(totals[i]) - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--chart-ink)">${fmtNum(totals[i], g.unidade)}</text>`);
       }
       parts.push(`<text x="${x(i)}" y="${H - mb + 18}" text-anchor="middle" font-size="11" fill="var(--chart-muted)">${diaCurto(dia, i, n, g.tipo)}</text>`);
@@ -529,6 +533,9 @@
   }
 
   function chartCaption(g) {
+    if (g.tipo === "mensal") {
+      return `Média de focos de queimada em cada mês do ano; em destaque, os próximos 3 meses. Fonte: ${g.fonte}.`;
+    }
     if (g.tipo === "chuva") {
       return `Milímetros de chuva por dia nos últimos 7 dias e a previsão para as próximas 24 horas (coluna listrada). Fonte: ${g.fonte}.`;
     }
@@ -551,7 +558,28 @@
     return `A rede neural classificou como risco ${nivel.toLowerCase()}, com ${pct.toFixed(1).replace(".", ",")}% de confiança.`;
   }
 
+  function renderSeason(data) {
+    const sz = data.regional && data.regional.sazonal;
+    $("#season-block").hidden = !sz;
+    if (!sz) return;
+    const onde = data.domain === "panorama" ? "no Maranhão" : `em ${cityOf(data)}`;
+    $("#season-lead").textContent = sz.total_medio_ano < 1
+      ? `Pelo histórico do INPE (${sz.periodo}), quase não há focos de queimada ${onde} em nenhum mês do ano.`
+      : `O que costuma acontecer ${onde} nos próximos meses, pelo histórico do INPE de ${sz.periodo}. Os meses de mais queimadas costumam ser ${sz.meses_pico[0]} e ${sz.meses_pico[1]}.`;
+    $("#season-cards").replaceChildren(...sz.proximos.map((p) => el("div", { className: "season-card" }, [
+      el("span", { className: "season-month", textContent: `${cap(p.mes)} de ${p.ano}` }),
+      el("span", { className: "season-level", dataset: { level: p.temporada }, textContent: `Temporada ${p.temporada.toLowerCase()}` }),
+      el("strong", { className: "season-num", textContent: String(Math.round(p.media)) }),
+      el("span", { className: "season-unit", textContent: "focos em média no mês" }),
+      el("span", { className: "season-chance", textContent: `Teve fogo em ${p.anos_com_foco} de ${p.anos} anos (${p.chance}%)` }),
+      el("span", { className: "season-range", textContent: `Menor e maior ano: ${p.min} a ${p.max} focos` }),
+    ])));
+    $("#season-chart").innerHTML = chartSvg(sz.grafico);
+    $("#season-caption").textContent = chartCaption(sz.grafico);
+  }
+
   function renderChart(data) {
+    renderSeason(data);
     const g = data.regional && data.regional.grafico;
     const conf = data.domain === "panorama" ? "" : confiancaTxt(data);
     $("#chart-block").hidden = !g && !conf;

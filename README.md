@@ -26,6 +26,7 @@ O site não acessa o INPE e o INMET diretamente porque o plano gratuito do Pytho
 | Chuva últimas/próximas 24 h, chuva de 30 dias, dias sem chuva relevante | Open-Meteo |
 | Municípios, códigos e coordenadas | IBGE (lista pública de municípios) |
 | Declividade em torno da sede | Open-Meteo (Copernicus DEM) |
+| Sinalização de 1 a 3 meses (média de focos por mês, 2015 em diante) | INPE · arquivos anuais do satélite de referência (`coletor/climatologia.py`, roda todo ano em fevereiro) |
 
 A API de estações do INMET passou a exigir token. Se você conseguir um, cadastre em **Settings > Secrets and variables > Actions** com o nome `INMET_TOKEN` e o coletor passa a usá-lo.
 
