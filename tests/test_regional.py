@@ -84,7 +84,7 @@ class RegionalTest(unittest.TestCase):
     def test_panorama(self):
         r = self.conversa(['como está o maranhão hoje?'])
         self.assertEqual(r['domain'], 'panorama')
-        self.assertEqual(r['regional']['ranking'][0]['nome'], 'Barra do Corda')
+        self.assertEqual(r['regional']['ranking_focos'][0]['nome'], 'Barra do Corda')
 
     def test_nome_parecido(self):
         r = self.conversa(['fogo em barra da corda'])
@@ -110,6 +110,14 @@ class RegionalTest(unittest.TestCase):
         pdf = gerar_pdf([{'data': x, 'at': '2026-10-26T16:00:00Z'} for x in r['reports']], 'Teste')
         self.assertTrue(pdf.startswith(b'%PDF'))
         self.assertGreater(len(pdf), 3000)
+
+    def test_minha_cidade_pergunta_a_cidade(self):
+        r = self.conversa(['fogo em são luís', 'Risco de queimadas na minha cidade'])
+        self.assertFalse(r['complete'])
+        self.assertIn('Qual é a sua cidade', r['reply'])
+        r = self.conversa(['fogo em são luís', 'Risco de queimadas na minha cidade', 'Barra do Corda'])
+        self.assertTrue(r['complete'])
+        self.assertEqual(r['reports'][0]['domain'], 'fire')
 
     def test_os_dois(self):
         r = self.conversa(['são luís', 'Os dois', 'apartamento', 'longe', 'não'])

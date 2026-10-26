@@ -243,6 +243,9 @@ td small { display: block; color: var(--muted); }
 .sources ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: .93rem; }
 .sources a { color: var(--accent); }
 
+/* ---------- Focos mais intensos ---------- */
+.big-fires ol { margin: 0; padding-left: 22px; display: grid; gap: 4px; font-size: .95rem; font-variant-numeric: tabular-nums; }
+
 /* ---------- Gráfico ---------- */
 .chart { width: 100%; }
 .chart svg { display: block; width: 100%; height: auto; overflow: visible; }

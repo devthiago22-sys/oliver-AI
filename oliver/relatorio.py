@@ -343,13 +343,23 @@ def gerar_pdf(analises, usuario=None):
                 dr = grafico(g, largura)
                 if dr:
                     hist += [Paragraph(TITULO_GRAFICO['panorama'], S['h3']), dr, _p(legenda_grafico(g), 'small')]
-            hist.append(Paragraph('Municípios com maior risco de propagação de fogo', S['h3']))
-            hist.append(tabela(['Posição e município', 'Índice', 'Focos em 24 h (INPE)'],
-                               [[f"{i + 1}º · {x.get('nome')}",
-                                 Paragraph(f'<font color="#{RISCO.get(x.get("nivel"), INK).hexval()[2:]}"><b>{_t(x.get("score"))}/100 · '
-                                           f'{_t(str(x.get("nivel", "")).lower())}</b></font>', S['cell']),
-                                 str(x.get('focos_24h', 0))] for i, x in enumerate((reg.get('ranking') or [])[:10])],
-                               [80 * mm, 45 * mm, largura - 125 * mm]))
+            hist.append(Paragraph('Municípios com mais focos de calor agora', S['h3']))
+            hist.append(tabela(['Posição e município', '24 h', '48 h', '7 dias', 'Risco de propagação'],
+                               [[f"{i + 1}º · {x.get('nome')}", str(x.get('h24', 0)), str(x.get('h48', 0)), str(x.get('d7', 0)),
+                                 _nivel_par(x.get('nivel')) if x.get('nivel') in RISCO else '-']
+                                for i, x in enumerate((reg.get('ranking_focos') or [])[:10])],
+                               [62 * mm, 18 * mm, 18 * mm, 20 * mm, largura - 118 * mm]))
+            maiores = reg.get('maiores_focos') or []
+            if maiores:
+                hist.append(Paragraph('Focos mais intensos (últimas 48 h)', S['h3']))
+                hist.append(tabela(['Município', 'Intensidade (FRP)', 'Data e hora', 'Satélite', 'Coordenadas'],
+                                   [[f.get('municipio', ''), f"{_num(f.get('frp')):.1f} MW".replace('.', ','), _utc_br(f.get('data')),
+                                     f.get('satelite') or '-', f"{_num(f.get('lat')):.3f}, {_num(f.get('lon')):.3f}"] for f in maiores[:5]],
+                                   [44 * mm, 28 * mm, 26 * mm, 36 * mm, largura - 134 * mm]))
+                hist.append(_p('A potência radiativa do fogo (FRP) mede a energia liberada: quanto maior, mais forte o incêndio.', 'small'))
+            c_ = reg.get('contagem') or {}
+            hist.append(_p(f"Risco de o fogo se espalhar, segundo a rede neural do Oliver: {c_.get('Alto', 0)} municípios com risco alto, "
+                           f"{c_.get('Moderado', 0)} moderado e {c_.get('Baixo', 0)} baixo."))
         else:
             idx = _indice(r) or 0
             nivel = r.get('overall_risk')

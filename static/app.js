@@ -293,7 +293,7 @@
     setBadge("", "Aguardando cidade");
     setGauge(null);
     $("#gauge").hidden = false;
-    for (const id of ["#chart-block", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
+    for (const id of ["#big-fires", "#chart-block", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
     $("#reset-btn").hidden = true;
   }
 
@@ -355,7 +355,7 @@
     if (isPanorama) {
       const c = data.regional.contagem || {};
       $("#gauge").hidden = true;
-      setGauge(null, null, `${c.Alto || 0} municípios com risco alto, ${c.Moderado || 0} com risco moderado e ${c.Baixo || 0} com risco baixo de propagação de fogo. ${data.regional.focos_24h} focos de calor nas últimas 24 h.`);
+      setGauge(null, null, `${data.regional.focos_24h} focos de calor nas últimas 24 h, ${data.regional.focos_48h} em 48 h${data.regional.focos_7d ? ` e ${data.regional.focos_7d} em 7 dias` : ""}. Risco de o fogo se espalhar: ${c.Alto || 0} municípios alto, ${c.Moderado || 0} moderado e ${c.Baixo || 0} baixo.`);
     } else {
       $("#gauge").hidden = false;
       const scoreRow = findings.find((f) => /^Risco estimado/.test(f.metric));
@@ -368,7 +368,7 @@
 
     // Tabela de dados
     const tableRows = findings.filter((f) => !/^Probabilidade|^Risco estimado/.test(f.metric));
-    $("#findings-block h3").textContent = isPanorama ? "Municípios com maior risco de fogo agora" : "Dados usados na análise";
+    $("#findings-block h3").textContent = isPanorama ? "Municípios com mais focos de calor agora" : "Dados usados na análise";
     const tbody = $("#findings");
     tbody.replaceChildren();
     for (const row of tableRows) {
@@ -385,6 +385,14 @@
     const actions = Array.isArray(data.actions) ? data.actions : [];
     $("#actions").replaceChildren(...actions.map((a) => el("li", { textContent: a })));
     $("#actions-block").hidden = actions.length === 0;
+
+    // Focos mais intensos (panorama)
+    const maiores = isPanorama && data.regional ? data.regional.maiores_focos || [] : [];
+    $("#big-fires").hidden = !maiores.length;
+    $("#big-fires-list").replaceChildren(...maiores.map((f) => el("li", {}, [
+      el("strong", { textContent: f.municipio }),
+      document.createTextNode(` · ${String(f.frp).replace(".", ",")} MW · ${utcToBr(f.data)} · ${f.satelite || ""}`),
+    ])));
 
     // Fontes e mapa (só na análise com dados oficiais)
     const reg = data.regional;
@@ -584,7 +592,7 @@
   async function showMap(reg, isPanorama) {
     const n = reg.focos_proximos.length;
     $("#map-caption").textContent = isPanorama
-      ? `${reg.focos_48h} focos de calor no Maranhão nas últimas 48 h (INPE). Mapa © colaboradores do OpenStreetMap.`
+      ? `${reg.focos_48h} focos de calor no Maranhão nas últimas 48 h (INPE). Círculos maiores são fogos mais intensos. Mapa © colaboradores do OpenStreetMap.`
       : `${n} foco(s) de calor nas últimas 48 h a até 60 km de ${reg.municipio.nome} (INPE). Mapa © colaboradores do OpenStreetMap.`;
     try { await loadLeaflet(); } catch { $("#map").textContent = "Não foi possível carregar o mapa agora."; return; }
     const L = window.L;
@@ -597,8 +605,9 @@
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
     for (const f of reg.focos_proximos) {
-      L.circleMarker([f.lat, f.lon], { radius: 6, color: "#7a2410", weight: 1, fillColor: "#ef6a2b", fillOpacity: 0.85 })
-        .bindPopup(`<b>Foco de calor</b><br>${f.municipio}<br>${utcToBr(f.data)} · ${f.satelite || ""}`)
+      const raio = f.frp ? Math.max(4, Math.min(16, 3 + Math.sqrt(f.frp))) : 5;
+      L.circleMarker([f.lat, f.lon], { radius: raio, color: "#7a2410", weight: 1, fillColor: "#ef6a2b", fillOpacity: 0.75 })
+        .bindPopup(`<b>Foco de calor</b><br>${f.municipio}<br>${utcToBr(f.data)} · ${f.satelite || ""}${f.frp ? `<br>Intensidade: ${String(f.frp).replace(".", ",")} MW` : ""}`)
         .addTo(layer);
     }
     if (isPanorama) {
@@ -751,9 +760,9 @@
         ${d === "panorama" ? `
           <p class="lead">${esc(data.reply)}</p>
           ${reg.grafico ? `<h3>${esc(CHART_TITLES.panorama)}</h3><div class="chart">${chartSvg(reg.grafico)}</div><p class="note">${esc(chartCaption(reg.grafico))}</p>` : ""}
-          <h3>Municípios com maior risco de propagação de fogo</h3>
-          <table class="data"><thead><tr><th>Posição e município</th><th>Índice</th><th>Focos em 24 h (INPE)</th></tr></thead><tbody>
-          ${reg.ranking.map((r, i) => `<tr><td><b>${i + 1}º · ${esc(r.nome)}</b></td><td><b class="lvl ${esc(r.nivel)}">${r.score}/100 · ${esc(r.nivel.toLowerCase())}</b></td><td>${r.focos_24h}</td></tr>`).join("")}
+          <h3>Municípios com mais focos de calor agora</h3>
+          <table class="data"><thead><tr><th>Posição e município</th><th>24 h</th><th>48 h</th><th>7 dias</th></tr></thead><tbody>
+          ${(reg.ranking_focos || []).map((r, i) => `<tr><td><b>${i + 1}º · ${esc(r.nome)}</b></td><td>${r.h24}</td><td>${r.h48}</td><td>${r.d7}</td></tr>`).join("")}
           </tbody></table>` : `
         <div class="verdict">
           <div><span class="label">Classificação</span><b class="big lvl ${esc(lvl)}">Risco ${esc(lvl.toLowerCase())}</b></div>

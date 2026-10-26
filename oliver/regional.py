@@ -75,7 +75,8 @@ APELIDOS = {' slz ': ' sao luis ', ' ribamar ': ' sao jose de ribamar ', ' imper
 PALAVRAS_CONVERSA = set('''risco riscos queimada queimadas fogo fogos incendio alagamento alagamentos enchente chuva cidade
 cidades municipio municipios estado estados maranhao quero saber ver tambem agora hoje como esta qual quais tem perigo
 predio casa imovel relatorio pdf junto juntar ficar substituir adicionar remover tirar sim nao obrigado oi ola bom dia
-tarde noite mais menos perto longe rua andar subsolo terreo apartamento vezes sempre nunca sei'''.split())
+tarde noite mais menos perto longe rua andar subsolo terreo apartamento vezes sempre nunca sei
+minha meu minhas meus onde moro regiao cidade'''.split())
 
 
 def achar_municipios(texto, dados):
@@ -349,7 +350,7 @@ def _resultado(domain, m, dados, pred, rows, reply, acoes, fontes):
             'municipio': {'codigo': m['codigo'], 'nome': m['nome'], 'lat': m['lat'], 'lon': m['lon']},
             'dados_de': data_br(dados.get('gerado_em', '')),
             'focos_proximos': [{'lat': f['lat'], 'lon': f['lon'], 'data': f.get('data_hora_utc'), 'satelite': f.get('satelite'),
-                                'municipio': dados['municipios'].get(f['municipio'], {}).get('nome', '')} for f in perto],
+                                'frp': f.get('frp'), 'municipio': dados['municipios'].get(f['municipio'], {}).get('nome', '')} for f in perto],
             'fontes': [{'nome': n, 'url': u} for n, u in lista_fontes],
             'avisos': m.get('avisos', []),
             'grafico': grafico_focos(m, dados) if domain == 'fire' else grafico_chuva(m),
@@ -367,45 +368,88 @@ def _dist(m, f):
 
 
 def panorama(dados):
-    ranking = []
-    for cod, m in dados['municipios'].items():
+    """Retrato geral do Maranhão: onde estão os focos de queimada agora e os maiores incêndios."""
+    mun = dados['municipios']
+    hist = dados.get('historico_focos') or {}
+    total_dia = hist.get('total_estado') or []
+    total24 = sum(m['focos'].get('h24', 0) for m in mun.values())
+    total48 = len(dados.get('focos', []))
+    total7 = sum(total_dia)
+
+    riscos, contagem = {}, {'Baixo': 0, 'Moderado': 0, 'Alto': 0}
+    for cod, m in mun.items():
         pred, _ = risco_fogo(m)
         if pred:
-            ranking.append((pred['score'], m['focos'].get('h24', 0), cod, pred))
-    ranking.sort(key=lambda x: (-x[0], -x[1]))
-    total24 = sum(m['focos'].get('h24', 0) for m in dados['municipios'].values())
-    total48 = len(dados.get('focos', []))
-    contagem = {'Baixo': 0, 'Moderado': 0, 'Alto': 0}
-    for s, _, _, p in ranking:
-        contagem[p['level']] += 1
-    top = ranking[:10]
-    mais_focos = sorted(dados['municipios'].values(), key=lambda m: -m['focos'].get('h24', 0))[:5]
-    mais_focos = [m for m in mais_focos if m['focos'].get('h24')]
-    rows = [{'metric': f"{i + 1}º · {dados['municipios'][cod]['nome']}", 'value': f'{s}/100', 'risk': p['level'],
-             'explanation': f"{h24} foco(s) nas últimas 24 h (INPE)"} for i, (s, h24, cod, p) in enumerate(top)]
-    reply = (f"Panorama do Maranhão: o INPE registrou {total24} foco(s) de calor nas últimas 24 horas ({total48} em 48 horas). "
-             f"Pela rede neural do Oliver, {contagem['Alto']} municípios estão com risco alto de propagação de fogo, "
-             f"{contagem['Moderado']} com risco moderado e {contagem['Baixo']} com risco baixo. ")
-    if mais_focos:
-        reply += 'Mais focos em 24 h: ' + ', '.join(f"{m['nome']} ({m['focos']['h24']})" for m in mais_focos) + '. '
-    reply += 'Me diga a sua cidade para uma análise detalhada.'
+            riscos[cod] = pred
+            contagem[pred['level']] += 1
+
+    def chave(item):
+        cod, m = item
+        return (-m['focos'].get('h24', 0), -m['focos'].get('h48', 0), -sum(m.get('historico_focos') or []))
+    ordem = [(cod, m) for cod, m in sorted(mun.items(), key=chave)
+             if m['focos'].get('h48', 0) or sum(m.get('historico_focos') or [])][:10]
+    ranking = [{'nome': m['nome'], 'h24': m['focos'].get('h24', 0), 'h48': m['focos'].get('h48', 0),
+                'd7': sum(m.get('historico_focos') or []), 'nivel': riscos.get(cod, {}).get('level', '-'),
+                'score': riscos.get(cod, {}).get('score')} for cod, m in ordem]
+
+    com_frp = [f for f in dados.get('focos', []) if f.get('frp')]
+    maiores = sorted(com_frp, key=lambda f: -f['frp'])[:5]
+    maiores = [{'municipio': mun.get(f['municipio'], {}).get('nome', ''), 'frp': round(f['frp'], 1),
+                'data': f.get('data_hora_utc'), 'satelite': f.get('satelite'), 'lat': f['lat'], 'lon': f['lon']} for f in maiores]
+
+    partes = [f"Nas últimas 24 horas, o INPE registrou {total24} foco(s) de calor no Maranhão "
+              f"({total48} em 48 horas{f' e {total7} em 7 dias' if total7 else ''})."]
+    if len(total_dia) >= 4:
+        ontem, anteriores = total_dia[-2], total_dia[:-2]
+        media = sum(anteriores) / len(anteriores)
+        if media:
+            comp = 'acima' if ontem > media * 1.1 else 'abaixo' if ontem < media * 0.9 else 'perto'
+            partes.append(f"Ontem foram {ontem} focos, {comp} da média dos {len(anteriores)} dias anteriores ({round(media)} por dia).")
+    if ranking:
+        partes.append('Onde há mais focos agora: ' + ', '.join(f"{r['nome']} ({r['h24']})" for r in ranking[:5] if r['h24'])
+                      .rstrip(': ') + '.' if any(r['h24'] for r in ranking[:5]) else
+                      'Nenhum município teve focos nas últimas 24 horas; os maiores números recentes estão em ' +
+                      ', '.join(r['nome'] for r in ranking[:3]) + '.')
+    if maiores:
+        mf = maiores[0]
+        partes.append(f"O fogo mais intenso detectado foi em {mf['municipio']}, com potência radiativa (FRP) de "
+                      f"{fmt(mf['frp'])} MW, em {_hora_br(mf['data'])}.")
+    partes.append(f"Pela rede neural do Oliver, {contagem['Alto']} municípios estão com risco alto de o fogo se espalhar, "
+                  f"{contagem['Moderado']} com risco moderado e {contagem['Baixo']} com risco baixo.")
+    reply = ' '.join(partes)
+
+    rows = [{'metric': f"{i + 1}º · {r['nome']}", 'value': f"{r['h24']} focos", 'risk': r['nivel'] if r['nivel'] in ('Baixo', 'Moderado', 'Alto') else 'Indeterminado',
+             'explanation': f"48 h: {r['h48']} · 7 dias: {r['d7']} · risco de propagação {str(r['nivel']).lower()}. Fonte: INPE."}
+            for i, r in enumerate(ranking)]
     nivel = 'Alto' if contagem['Alto'] else 'Moderado' if contagem['Moderado'] else 'Baixo'
     return {
         'domain': 'panorama', 'complete': True, 'location': 'Maranhão', 'overall_risk': nivel, 'reply': reply,
-        'findings': rows, 'actions': ['Acompanhe os alertas da Defesa Civil (199) e do INPE.'],
+        'findings': rows,
+        'actions': ['Se vir fogo ou fumaça perto de casas ou da mata, ligue 193 (Bombeiros).',
+                    'Não use fogo para limpar terreno ou queimar lixo, principalmente com o tempo seco.',
+                    'Acompanhe os alertas da Defesa Civil (199) e do INPE.'],
         'regional': {
             'municipio': {'codigo': '21', 'nome': 'Maranhão', 'lat': -5.0, 'lon': -45.3},
             'dados_de': data_br(dados.get('gerado_em', '')),
             'focos_proximos': [{'lat': f['lat'], 'lon': f['lon'], 'data': f.get('data_hora_utc'), 'satelite': f.get('satelite'),
-                                'municipio': dados['municipios'].get(f['municipio'], {}).get('nome', '')} for f in dados.get('focos', [])[:400]],
-            'fontes': [{'nome': n, 'url': u} for n, u in (FONTES['INPE'], FONTES['INMET'], FONTES['Open-Meteo'], FONTES['IBGE'])],
-            'contagem': contagem, 'focos_24h': total24, 'focos_48h': total48,
-            'ranking': [{'nome': dados['municipios'][cod]['nome'], 'score': s, 'nivel': p['level'], 'focos_24h': h24} for s, h24, cod, p in top],
-            'grafico': ({'tipo': 'focos', 'dias': dados['historico_focos']['dias'], 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas',
-                         'series': [{'nome': 'Maranhão', 'valores': dados['historico_focos']['total_estado'], 'cor': 'fogo-1'}]}
-                        if dados.get('historico_focos') else None),
+                                'frp': f.get('frp'), 'municipio': mun.get(f['municipio'], {}).get('nome', '')}
+                               for f in dados.get('focos', [])[:800]],
+            'fontes': [{'nome': n, 'url': u} for n, u in (FONTES['INPE'], FONTES['Open-Meteo'], FONTES['IBGE'])],
+            'contagem': contagem, 'focos_24h': total24, 'focos_48h': total48, 'focos_7d': total7,
+            'ranking_focos': ranking, 'maiores_focos': maiores,
+            'grafico': ({'tipo': 'focos', 'dias': hist['dias'], 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas',
+                         'series': [{'nome': 'Maranhão', 'valores': total_dia, 'cor': 'fogo-1'}]} if hist else None),
         },
     }
+
+
+def _hora_br(utc):
+    try:
+        from datetime import datetime, timedelta
+        d = datetime.strptime(str(utc)[:16], '%Y-%m-%d %H:%M') - timedelta(hours=3)
+        return d.strftime('%d/%m às %H:%M')
+    except ValueError:
+        return str(utc or '')
 
 
 # ---------------------------------------------------------------------------
@@ -524,6 +568,13 @@ def conversar(message, state):
         elif not (achar_municipios(message, dados)[0] or _intencao(t) or _tem(t, PALAVRAS_PANORAMA)):
             return _pergunta(state, campo, 'Não entendi. Pode escolher uma das opções?')
 
+    # "Risco de queimadas na minha cidade", "no meu imóvel": a pessoa ainda vai dizer qual é a cidade.
+    if not respondeu and not cidades_msg and not achar_municipios(message, dados)[0] and _tem(t, (' minha cidade', ' meu imovel', ' minha casa', ' meu predio', ' onde eu moro', ' minha regiao')):
+        nova = _intencao(t)
+        estado = {'alagamento': {}, 'intencao': nova or state.get('intencao')}
+        assunto = {'fire': 'o risco de queimadas', 'flood': 'o risco de alagamento', 'both': 'os riscos'}.get(estado['intencao'], 'os riscos')
+        return _pedir(estado, f'Qual é a sua cidade no Maranhão? Escreva o nome e eu busco {assunto} com os dados oficiais.')
+
     # 3) cidades citadas (exatas ou parecidas)
     if not cidades_msg and not respondeu:
         cidades_msg, sugestao = achar_municipios(message, dados)
@@ -536,7 +587,7 @@ def conversar(message, state):
     if _tem(t, PALAVRAS_PANORAMA) and not cidades_msg:
         r = panorama(dados)
         r['state'] = {'alagamento': {}, 'intencao': state.get('intencao')}
-        r['options'] = ['Ver a minha cidade']
+        r['options'] = ['Risco de queimadas na minha cidade'] + ([f"Queimadas em {r['regional']['ranking_focos'][0]['nome']}"] if r['regional']['ranking_focos'] else [])
         return r
 
     outro_estado = _tem(t, OUTROS_ESTADOS)
@@ -555,7 +606,7 @@ def conversar(message, state):
         if ' maranhao ' in t:
             r = panorama(dados)
             r['state'] = state
-            r['options'] = ['Ver a minha cidade']
+            r['options'] = ['Risco de queimadas na minha cidade']
             return r
         return _pedir(state, 'Para eu buscar os dados oficiais, me diga a cidade do Maranhão. Por exemplo: "Barra do Corda" ou "Imperatriz". '
                              'Você pode citar mais de uma cidade.', ['Como está o Maranhão hoje?'])
