@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Oliver · Triagem de risco</title>
+  <meta name="description" content="Oliver: rede neural demonstrativa para triagem de risco de propagação de fogo e alagamento predial.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-domain="">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <h1>Oliver</h1>
+        <p>Triagem de risco com rede neural local</p>
+      </div>
+    </div>
+    <div class="top-right">
+    <nav class="scenario" aria-label="Cenário de análise">
+      <button type="button" class="scenario-btn" data-domain="fire" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 3.5 5 5.5 5 10.5A5 5 0 0 1 7 12.5c0-2 1-3.5 2-4.5.3 1.6 1.2 2.6 2.2 3C10.8 8 11 5 12 2Z"/></svg>
+        Propagação de fogo
+      </button>
+      <button type="button" class="scenario-btn" data-domain="flood" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h9v8H4zM13 6h7v5h-7z" opacity=".55"/><path d="M2 15c2.2 0 2.2 1.5 4.4 1.5S8.6 15 10.8 15s2.2 1.5 4.4 1.5S17.4 15 19.6 15 22 16.5 22 16.5V19s-.2-1.5-2.4-1.5-2.2 1.5-4.4 1.5-2.2-1.5-4.4-1.5S8.6 19 6.4 19 4.2 17.5 2 17.5Z"/></svg>
+        Alagamento predial
+      </button>
+    </nav>
+    <div class="account" id="account" hidden>
+      <span id="account-name"></span>
+      <button type="button" id="logout-btn" class="ghost-btn">Sair</button>
+    </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Coluna esquerda: entrada de dados -->
+    <section class="input-panel" aria-label="Entrada de dados">
+      <div class="mode-switch" role="tablist" aria-label="Modo de entrada">
+        <button type="button" role="tab" id="tab-chat" aria-selected="true" aria-controls="pane-chat">Conversa</button>
+        <button type="button" role="tab" id="tab-form" aria-selected="false" aria-controls="pane-form">Formulário</button>
+      </div>
+
+      <!-- Conversa -->
+      <div id="pane-chat" role="tabpanel" aria-labelledby="tab-chat" class="pane">
+        <ol id="messages" class="messages" aria-live="polite"></ol>
+        <form id="chat-form" class="composer" autocomplete="off">
+          <label for="chat-input" class="visually-hidden">Mensagem para Oliver</label>
+          <textarea id="chat-input" rows="2" placeholder="Descreva o cenário ou responda ao Oliver…" maxlength="12000"></textarea>
+          <button type="submit" class="send-btn">Enviar</button>
+        </form>
+      </div>
+
+      <!-- Formulário estruturado -->
+      <div id="pane-form" role="tabpanel" aria-labelledby="tab-form" class="pane" hidden>
+        <p class="form-empty" id="form-empty">Escolha um cenário no topo para ver os campos.</p>
+
+        <form id="fire-form" class="data-form" data-domain="fire" hidden novalidate>
+          <div class="field full">
+            <label for="f-loc">Local</label>
+            <input id="f-loc" name="loc" required placeholder="Ex.: Chapada dos Veadeiros, GO">
+          </div>
+          <fieldset class="field full">
+            <legend>Há fogo ativo agora?</legend>
+            <div class="radio-row">
+              <label><input type="radio" name="active" value="sim" required> Sim</label>
+              <label><input type="radio" name="active" value="não"> Não</label>
+            </div>
+          </fieldset>
+          <div class="field">
+            <label for="f-wind">Velocidade do vento <span class="unit">km/h</span></label>
+            <input id="f-wind" name="wind" type="number" min="0" max="100" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="f-dir">Direção do vento</label>
+            <select id="f-dir" name="dir" required>
+              <option value="">Selecione</option>
+              <option>norte</option><option>nordeste</option><option>leste</option><option>sudeste</option>
+              <option>sul</option><option>sudoeste</option><option>oeste</option><option>noroeste</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="f-hum">Umidade relativa <span class="unit">%</span></label>
+            <input id="f-hum" name="hum" type="number" min="0" max="100" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="f-dry">Secura da vegetação <span class="unit">%</span></label>
+            <input id="f-dry" name="dry" type="number" min="0" max="100" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="f-slope">Declividade <span class="unit">%</span></label>
+            <input id="f-slope" name="slope" type="number" min="0" max="100" step="any" required inputmode="decimal">
+          </div>
+          <p class="form-error" role="alert" hidden></p>
+          <button type="submit" class="primary-btn full">Calcular risco de propagação</button>
+        </form>
+
+        <form id="flood-form" class="data-form" data-domain="flood" hidden novalidate>
+          <div class="field full">
+            <label for="a-loc">Local do prédio</label>
+            <input id="a-loc" name="loc" required placeholder="Ex.: Centro, São Luís – MA">
+          </div>
+          <div class="field">
+            <label for="a-rain">Chuva acumulada (24 h) <span class="unit">mm</span></label>
+            <input id="a-rain" name="rain" type="number" min="0" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="a-fc">Chuva prevista (24 h) <span class="unit">mm</span></label>
+            <input id="a-fc" name="forecast" type="number" min="0" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="a-dist">Distância de rio/córrego <span class="unit">m</span></label>
+            <input id="a-dist" name="dist" type="number" min="0" step="any" required inputmode="decimal">
+          </div>
+          <div class="field">
+            <label for="a-drain">Condição da drenagem</label>
+            <select id="a-drain" name="drain" required>
+              <option value="">Selecione</option>
+              <option value="boa">Boa (bueiros livres)</option>
+              <option value="regular">Regular (parcialmente obstruída)</option>
+              <option value="ruim">Ruim (entupida ou precária)</option>
+            </select>
+          </div>
+          <div class="field full">
+            <label for="a-floor">Piso mais vulnerável</label>
+            <select id="a-floor" name="floor" required>
+              <option value="">Selecione</option>
+              <option value="subsolo">Subsolo ou garagem subterrânea</option>
+              <option value="térreo">Térreo</option>
+              <option value="pavimento elevado">Pavimento elevado</option>
+            </select>
+          </div>
+          <p class="form-error" role="alert" hidden></p>
+          <button type="submit" class="primary-btn full">Calcular risco de alagamento</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- Coluna direita: resultado -->
+    <section class="result-panel" aria-label="Resultado da análise" aria-live="polite">
+      <div class="gauge-block">
+        <div class="gauge-head">
+          <h2 id="result-title">Nenhuma análise ainda</h2>
+          <span id="risk-badge" class="badge" data-risk="">Aguardando cenário</span>
+        </div>
+        <div class="gauge" id="gauge" aria-hidden="true">
+          <div class="gauge-track">
+            <span class="zone" data-zone="Baixo"></span>
+            <span class="zone" data-zone="Moderado"></span>
+            <span class="zone" data-zone="Alto"></span>
+          </div>
+          <div class="gauge-needle" id="gauge-needle"><span id="gauge-value">–</span></div>
+          <div class="gauge-scale"><span>0</span><span>50</span><span>100</span></div>
+        </div>
+        <p class="gauge-caption" id="gauge-caption">O índice de 0 a 100 aparece aqui quando todos os dados forem reunidos.</p>
+      </div>
+
+      <div class="probs" id="probs" hidden>
+        <h3>Probabilidade por classe</h3>
+        <ul id="prob-list"></ul>
+      </div>
+
+      <div class="findings" id="findings-block" hidden>
+        <h3>Dados da análise</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th scope="col">Item</th><th scope="col">Valor</th><th scope="col">Situação</th></tr></thead>
+            <tbody id="findings"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="actions" id="actions-block" hidden>
+        <h3>Próximos passos</h3>
+        <ul id="actions"></ul>
+      </div>
+
+      <div class="report" id="report-block" hidden>
+        <h3>Relatório em PDF</h3>
+        <ul class="report-list" id="report-list"></ul>
+        <p class="report-note" id="report-note"></p>
+        <div class="report-actions">
+          <button type="button" id="pdf-btn" class="primary-btn">Gerar relatório em PDF</button>
+          <button type="button" id="other-btn" class="ghost-btn" hidden>Analisar também</button>
+        </div>
+      </div>
+
+      <button type="button" id="reset-btn" class="ghost-btn" hidden>Nova análise</button>
+    </section>
+  </main>
+
+  <footer class="disclaimer">
+    Protótipo acadêmico treinado com dados sintéticos. As classificações são demonstrativas e não substituem
+    alertas da Defesa Civil, do INPE, do INMET ou do Cemaden. Em emergência, ligue 193 (Bombeiros) ou 199 (Defesa Civil).
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

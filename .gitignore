@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+oliver.db
+secret.key
+*.zip
+/preview/
+/login.html
+/oliver.html
+/oliver_ia.py
