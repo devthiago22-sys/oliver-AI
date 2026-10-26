@@ -43,8 +43,8 @@ O plano gratuito do PythonAnywhere roda Flask e guarda o banco SQLite entre rein
 1. Crie uma conta em https://www.pythonanywhere.com (plano *Beginner*, grátis). O seu site vai ficar em `https://SEU_USUARIO.pythonanywhere.com`.
 2. Na aba **Consoles**, abra um **Bash** e rode:
    ```
-   git clone https://github.com/SEU_USUARIO_GITHUB/oliver-tcc.git
-   cd oliver-tcc
+   git clone https://github.com/devthiago22-sys/oliver-AI.git
+   cd oliver-AI
    pip3 install --user -r requirements.txt
    python3 -m unittest
    ```
@@ -55,7 +55,7 @@ O plano gratuito do PythonAnywhere roda Flask e guarda o banco SQLite entre rein
    - Clique em **Reload** no topo.
 5. Abra `https://SEU_USUARIO.pythonanywhere.com`. Pronto.
 
-**Para atualizar o site** depois de mudar o código: envie para o GitHub, depois no Bash do PythonAnywhere rode `cd ~/oliver-tcc && git pull` e clique em **Reload** na aba Web.
+**Para atualizar o site** depois de mudar o código: envie para o GitHub, depois no Bash do PythonAnywhere rode `cd ~/oliver-AI && git pull` e clique em **Reload** na aba Web.
 
 **Atenção:** no plano grátis, o site é desativado se ficar um mês sem você entrar no painel. Na aba **Web** há um botão para estender o prazo; clique nele antes da apresentação.
 

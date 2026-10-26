@@ -5,7 +5,7 @@
 import os
 import sys
 
-PROJETO = '/home/SEU_USUARIO/oliver-tcc'
+PROJETO = '/home/SEU_USUARIO/oliver-AI'
 if PROJETO not in sys.path:
     sys.path.insert(0, PROJETO)
 
