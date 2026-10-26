@@ -16,20 +16,10 @@
       <span class="brand-mark" aria-hidden="true"></span>
       <div>
         <h1>Oliver</h1>
-        <p>Triagem de risco com rede neural local</p>
+        <p>Risco de queimadas e alagamento no Maranhão</p>
       </div>
     </div>
     <div class="top-right">
-    <nav class="scenario" aria-label="Cenário de análise">
-      <button type="button" class="scenario-btn" data-domain="fire" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2c1 3.5 5 5.5 5 10.5A5 5 0 0 1 7 12.5c0-2 1-3.5 2-4.5.3 1.6 1.2 2.6 2.2 3C10.8 8 11 5 12 2Z"/></svg>
-        Propagação de fogo
-      </button>
-      <button type="button" class="scenario-btn" data-domain="flood" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h9v8H4zM13 6h7v5h-7z" opacity=".55"/><path d="M2 15c2.2 0 2.2 1.5 4.4 1.5S8.6 15 10.8 15s2.2 1.5 4.4 1.5S17.4 15 19.6 15 22 16.5 22 16.5V19s-.2-1.5-2.4-1.5-2.2 1.5-4.4 1.5-2.2-1.5-4.4-1.5S8.6 19 6.4 19 4.2 17.5 2 17.5Z"/></svg>
-        Alagamento predial
-      </button>
-    </nav>
     <div class="account" id="account" hidden>
       <span id="account-name"></span>
       <button type="button" id="logout-btn" class="ghost-btn">Sair</button>
@@ -42,7 +32,7 @@
     <section class="input-panel" aria-label="Entrada de dados">
       <div class="mode-switch" role="tablist" aria-label="Modo de entrada">
         <button type="button" role="tab" id="tab-chat" aria-selected="true" aria-controls="pane-chat">Conversa</button>
-        <button type="button" role="tab" id="tab-form" aria-selected="false" aria-controls="pane-form">Formulário</button>
+        <button type="button" role="tab" id="tab-form" aria-selected="false" aria-controls="pane-form">Simulação</button>
       </div>
 
       <!-- Conversa -->
@@ -50,16 +40,22 @@
         <ol id="messages" class="messages" aria-live="polite"></ol>
         <form id="chat-form" class="composer" autocomplete="off">
           <label for="chat-input" class="visually-hidden">Mensagem para Oliver</label>
-          <textarea id="chat-input" rows="2" placeholder="Descreva o cenário ou responda ao Oliver…" maxlength="12000"></textarea>
+          <textarea id="chat-input" rows="2" placeholder="Ex.: risco de queimadas em Barra do Corda" maxlength="12000"></textarea>
           <button type="submit" class="send-btn">Enviar</button>
         </form>
       </div>
 
       <!-- Formulário estruturado -->
       <div id="pane-form" role="tabpanel" aria-labelledby="tab-form" class="pane" hidden>
-        <p class="form-empty" id="form-empty">Escolha um cenário no topo para ver os campos.</p>
+        <div class="sim-head">
+          <div class="sim-switch" role="group" aria-label="Tipo de simulação">
+            <button type="button" data-sim="fire" aria-pressed="true">Fogo</button>
+            <button type="button" data-sim="flood" aria-pressed="false">Alagamento</button>
+          </div>
+          <p class="sim-note">Teste a rede neural com valores escolhidos por você, sem usar os dados oficiais.</p>
+        </div>
 
-        <form id="fire-form" class="data-form" data-domain="fire" hidden novalidate>
+        <form id="fire-form" class="data-form" data-domain="fire" novalidate>
           <div class="field full">
             <label for="f-loc">Local</label>
             <input id="f-loc" name="loc" required placeholder="Ex.: Chapada dos Veadeiros, GO">
@@ -142,6 +138,7 @@
 
     <!-- Coluna direita: resultado -->
     <section class="result-panel" aria-label="Resultado da análise" aria-live="polite">
+      <div class="result-switch" id="result-switch" role="tablist" aria-label="Resultados" hidden></div>
       <div class="gauge-block">
         <div class="gauge-head">
           <h2 id="result-title">Nenhuma análise ainda</h2>
@@ -157,6 +154,12 @@
           <div class="gauge-scale"><span>0</span><span>50</span><span>100</span></div>
         </div>
         <p class="gauge-caption" id="gauge-caption">O índice de 0 a 100 aparece aqui quando todos os dados forem reunidos.</p>
+      </div>
+
+      <div class="map-block" id="map-block" hidden>
+        <h3>Focos de calor na região</h3>
+        <div id="map" class="map" role="img" aria-label="Mapa com o município e os focos de calor das últimas 48 horas"></div>
+        <p class="map-caption" id="map-caption"></p>
       </div>
 
       <div class="probs" id="probs" hidden>
@@ -177,6 +180,12 @@
       <div class="actions" id="actions-block" hidden>
         <h3>Próximos passos</h3>
         <ul id="actions"></ul>
+      </div>
+
+      <div class="sources" id="sources-block" hidden>
+        <h3>Fontes dos dados</h3>
+        <p class="sources-time" id="sources-time"></p>
+        <ul id="sources"></ul>
       </div>
 
       <div class="report" id="report-block" hidden>

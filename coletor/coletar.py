@@ -180,11 +180,27 @@ def coletar_focos(base, agora):
                 'precipitacao': num('precipitacao'), 'risco_fogo': num('risco_fogo'), 'frp': num('frp'),
                 'bioma': row.get('bioma'),
             })
-    # o arquivo pode repetir o mesmo foco; mantém um por id
+    # O satélite geoestacionário (GOES) detecta o mesmo fogo a cada 10 minutos. Para contar
+    # focos como uma pessoa entende, junta as detecções no mesmo local (~1 km) e guarda a
+    # mais recente, com o número de detecções e os satélites que viram o fogo.
     unicos = {f['id']: f for f in focos if f['id']}
-    focos = sorted(unicos.values(), key=lambda f: f['data_hora_utc'] or '', reverse=True)
-    log_fontes['inpe_focos'] = {'ok': len(erros) < 2, 'erros': erros, 'focos_ma_48h': len(focos)}
-    log(f'INPE: {len(focos)} focos no Maranhão (48 h)', erros or '')
+    deteccoes = len(unicos)
+    locais = {}
+    for f in sorted(unicos.values(), key=lambda f: f['data_hora_utc'] or ''):
+        chave = (f['municipio'], round(f['lat'], 2), round(f['lon'], 2))
+        if chave in locais:
+            antigo = locais[chave]
+            f['deteccoes'] = antigo['deteccoes'] + 1
+            f['primeira_utc'] = antigo['primeira_utc']
+            f['satelites'] = sorted(set(antigo['satelites']) | {f['satelite']})
+        else:
+            f['deteccoes'], f['primeira_utc'], f['satelites'] = 1, f['data_hora_utc'], [f['satelite']]
+        locais[chave] = f
+    focos = sorted(locais.values(), key=lambda f: f['data_hora_utc'] or '', reverse=True)
+    for f in focos:
+        f['satelite'] = ', '.join(s for s in f.pop('satelites') if s)
+    log_fontes['inpe_focos'] = {'ok': len(erros) < 2, 'erros': erros, 'focos_ma_48h': len(focos), 'deteccoes_48h': deteccoes}
+    log(f'INPE: {len(focos)} focos (locais distintos) e {deteccoes} detecções no Maranhão em 48 h', erros or '')
 
     limite_24h = (agora - timedelta(hours=24)).astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
     resumo = {}
@@ -321,12 +337,13 @@ def coletar_open_meteo(base):
             futuro = sum(p or 0 for t, p in zip(tempos, prec) if t > agora_local)
             chuva[cod] = {'chuva_24h': round(passado, 1), 'chuva_prev_24h': round(futuro, 1)}
             diarios = b.get('daily', {}).get('precipitation_sum', [])[:-1]  # sem o dia de hoje (incompleto)
+            # Garoa de modelo (< 5 mm) não molha a vegetação de verdade: conta os dias seguidos abaixo disso.
             n = 0
             for p in reversed(diarios):
-                if (p or 0) >= 1.0:
+                if (p or 0) >= 5.0:
                     break
                 n += 1
-            secos[cod] = n
+            secos[cod] = {'dias': n, 'chuva_30d': round(sum(p or 0 for p in diarios[-30:]), 1)}
         time.sleep(1)
     log_fontes['open_meteo'] = {'ok': True, 'municipios': len(atual)}
     log(f'Open-Meteo: {len(atual)} municípios')
@@ -378,8 +395,10 @@ def main():
             clima['dias_sem_chuva'] = rf['dias_sem_chuva_inpe']
             clima['fonte_dias_sem_chuva'] = 'INPE'
         elif cod in om_secos:
-            clima['dias_sem_chuva'] = om_secos[cod]
+            clima['dias_sem_chuva'] = om_secos[cod]['dias']
             clima['fonte_dias_sem_chuva'] = 'Open-Meteo'
+        if cod in om_secos:
+            clima['chuva_30d'] = om_secos[cod]['chuva_30d']
         item['clima'] = clima
         item['focos'] = rf or {'h24': 0, 'h48': 0, 'risco_inpe_max': None, 'dias_sem_chuva_inpe': None, 'ultimo_utc': None}
         item['avisos'] = avisos.get(cod, [])

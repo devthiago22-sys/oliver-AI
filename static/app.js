@@ -1,21 +1,34 @@
 /* Oliver · front-end
- * Conversa com o backend em POST /api/oliver enviando { message, history, domain }.
- * O backend devolve { reply, overall_risk, findings, actions, domain, complete, location }.
+ *
+ * Conversa (aba "Conversa"): a pessoa diz a cidade do Maranhão; o servidor busca os
+ * dados oficiais coletados (INPE, INMET, com Open-Meteo como fonte complementar),
+ * passa pela rede neural e devolve { reply, options, state, reports[] }.
+ * Simulação (aba "Simulação"): valores técnicos digitados à mão (modo "manual").
  */
 (() => {
   "use strict";
 
   const API_URL = window.OLIVER_API || "/api/oliver";
   const LOGIN_PAGE = window.OLIVER_LOGIN_PAGE || "/";
-
-  const EXAMPLES = {
-    fire: "Localização: Chapada dos Veadeiros; fogo ativo: sim; vento: 30 km/h; direção do vento: norte; umidade: 35%; secura da vegetação: 70%; declividade: 20%.",
-    flood: "Localização: Centro de São Luís; chuva acumulada: 60 mm; chuva prevista: 40 mm; distância do rio: 500 m; drenagem: ruim; piso vulnerável: térreo.",
+  const LEAFLET = {
+    css: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css",
+    js: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js",
   };
-  const DOMAIN_LABEL = { fire: "propagação de fogo", flood: "alagamento predial" };
+  const MA_BOUNDS = [[-10.3, -48.8], [-1.0, -41.7]];
+  const PDF_OPTION = "Gerar relatório em PDF";
+
+  const TITLES = { fire: "Risco de queimadas", flood: "Risco de alagamento", panorama: "Panorama do Maranhão" };
+  const DOMAIN_LABEL = { fire: "queimadas", flood: "alagamento", panorama: "panorama do Maranhão" };
   const RISK_ORDER = ["Baixo", "Moderado", "Alto"];
 
-  const state = { domain: "", history: [], busy: false, reports: {} };
+  const state = {
+    busy: false,
+    chat: {},          // estado da conversa regional (cidade, perguntas respondidas)
+    history: [],       // histórico só para a simulação manual
+    reports: {},       // fire / flood / panorama → { data, at }
+    shown: [],         // relatórios mostrados no painel agora
+    sim: "fire",
+  };
 
   // ---------- Atalhos de DOM ----------
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -55,47 +68,41 @@
     const li = el("li", { className: "msg bot typing" }, [
       el("span", { className: "who", textContent: "Oliver" }),
       el("span", { className: "typing-dots", innerHTML: "<span></span><span></span><span></span>" }),
-      el("span", { className: "visually-hidden", textContent: "Oliver está analisando" }),
+      el("span", { className: "visually-hidden", textContent: "Oliver está buscando os dados" }),
     ]);
     messages.append(li);
     messages.scrollTop = messages.scrollHeight;
     return li;
   }
 
-  function quickButtons(items) {
+  function quickButtons(labels) {
     const box = el("div", { className: "quick" });
-    for (const { label, onClick } of items) {
-      box.append(el("button", { type: "button", textContent: label, onclick: onClick }));
+    for (const label of labels) {
+      box.append(el("button", {
+        type: "button", textContent: label,
+        onclick: () => (label === PDF_OPTION ? generatePdf() : send(label)),
+      }));
     }
     return box;
   }
 
-  // ---------- Comunicação com o backend ----------
-  async function callOliver(message) {
-    const payload = { message, history: state.history, domain: state.domain || "auto" };
+  // ---------- Comunicação com o servidor ----------
+  async function callOliver(payload) {
     let res;
     try {
-      res = await fetch(API_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      res = await fetch(API_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     } catch {
-      const err = new Error("offline");
-      err.offline = true;
-      throw err;
+      const err = new Error("offline"); err.offline = true; throw err;
     }
     if (res.status === 401) { location.href = LOGIN_PAGE; throw new Error("Sua sessão expirou. Entre novamente."); }
     if (res.status === 404 || res.status === 405) { const e = new Error("offline"); e.offline = true; throw e; }
     let data = null;
     try { data = await res.json(); } catch { /* resposta sem JSON */ }
-    if (!res.ok || !data || data.error) {
-      throw new Error((data && data.error) || `O servidor respondeu com erro ${res.status}.`);
-    }
+    if (!res.ok || !data || data.error) throw new Error((data && data.error) || `O servidor respondeu com erro ${res.status}.`);
     return data;
   }
 
-  async function send(message, { showInChat = true, resetHistory = false } = {}) {
+  async function send(message, { mode = "regional", domain = "auto", showInChat = true, resetHistory = false } = {}) {
     message = message.trim();
     if (!message || state.busy) return;
     if (resetHistory) state.history = [];
@@ -103,30 +110,48 @@
     if (showInChat) addMessage("user", message);
     const typing = showTyping();
     try {
-      const data = await callOliver(message);
+      const payload = mode === "manual"
+        ? { message, mode, domain, history: state.history }
+        : { message, mode, state: state.chat };
+      const data = await callOliver(payload);
       typing.remove();
-      state.history.push({ role: "user", text: message }, { role: "assistant", text: data.reply });
-      if (data.domain && data.domain !== state.domain) setDomain(data.domain, { announce: false });
-      if (data.complete) state.reports[data.domain] = { data, at: new Date() };
-      addMessage("bot", data.reply, data.complete ? reportQuickButtons() : null);
-      renderResult(data);
-      updateReport();
-      // Depois de uma análise completa, a próxima mensagem começa do zero.
-      if (data.complete) {
-        state.history = [];
-        // No celular o resultado fica abaixo do chat: rola até ele.
-        if (window.matchMedia("(max-width: 900px)").matches) {
-          $(".result-panel").scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-      }
+      handleResponse(data, mode, message);
     } catch (err) {
       typing.remove();
       if (!err.offline) console.error(err);
       addError(err.offline
-        ? "O servidor do Oliver não está rodando. Abra o terminal na pasta do projeto, rode python app.py e acesse http://127.0.0.1:5000 no navegador."
+        ? "O servidor do Oliver não está respondendo. Se estiver rodando no seu computador, abra o terminal na pasta do projeto, rode python app.py e acesse http://127.0.0.1:5000."
         : err.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  function handleResponse(data, mode, message) {
+    if (mode === "manual") {
+      state.history.push({ role: "user", text: message }, { role: "assistant", text: data.reply });
+      if (data.complete) state.history = [];
+    } else if (data.state) {
+      state.chat = data.state;
+    }
+
+    const reports = Array.isArray(data.reports) ? data.reports
+      : data.complete && ["fire", "flood", "panorama"].includes(data.domain) ? [data] : [];
+    const at = new Date();
+    for (const r of reports) state.reports[r.domain] = { data: r, at };
+
+    let options = Array.isArray(data.options) ? [...data.options] : [];
+    if (reports.length && !options.includes(PDF_OPTION)) options.unshift(PDF_OPTION);
+    addMessage("bot", data.reply, options.length ? quickButtons(options) : null);
+
+    if (reports.length) {
+      showReports(reports);
+      updateReport();
+      if (window.matchMedia("(max-width: 900px)").matches) {
+        $(".result-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    } else if (mode === "manual" && data.findings && data.findings.length) {
+      showReports([data]);
     }
   }
 
@@ -136,32 +161,6 @@
     $$(".primary-btn").forEach((b) => (b.disabled = busy));
   }
 
-  // ---------- Cenário ----------
-  function setDomain(domain, { announce = true } = {}) {
-    state.domain = domain;
-    document.body.dataset.domain = domain;
-    $$(".scenario-btn").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.domain === domain)));
-    $$(".data-form").forEach((f) => (f.hidden = f.dataset.domain !== domain));
-    $("#form-empty").hidden = Boolean(domain);
-    if (announce) {
-      state.history = [];
-      clearResult();
-      send(`Quero analisar ${DOMAIN_LABEL[domain]}.`, { showInChat: true }).then(() => {
-        const last = messages.lastElementChild;
-        if (last && last.classList.contains("bot")) {
-          last.append(quickButtons([
-            { label: "Preencher com dados de exemplo", onClick: () => send(EXAMPLES[domain]) },
-            { label: "Usar o formulário", onClick: () => selectTab("form") },
-          ]));
-        }
-      });
-    }
-  }
-
-  $$(".scenario-btn").forEach((btn) =>
-    btn.addEventListener("click", () => { if (!state.busy) setDomain(btn.dataset.domain); })
-  );
-
   // ---------- Abas ----------
   function selectTab(which) {
     const isChat = which === "chat";
@@ -169,14 +168,15 @@
     $("#tab-form").setAttribute("aria-selected", String(!isChat));
     $("#pane-chat").hidden = !isChat;
     $("#pane-form").hidden = isChat;
-    (isChat ? chatInput : $("#pane-form input, #pane-form select"))?.focus();
+    (isChat ? chatInput : $("#pane-form .data-form:not([hidden]) input"))?.focus();
   }
   $("#tab-chat").addEventListener("click", () => selectTab("chat"));
   $("#tab-form").addEventListener("click", () => selectTab("form"));
   $(".mode-switch").addEventListener("keydown", (e) => {
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-      selectTab($("#tab-chat").getAttribute("aria-selected") === "true" ? "form" : "chat");
-      $(`#tab-${$("#tab-chat").getAttribute("aria-selected") === "true" ? "chat" : "form"}`).focus();
+      const toForm = $("#tab-chat").getAttribute("aria-selected") === "true";
+      selectTab(toForm ? "form" : "chat");
+      $(toForm ? "#tab-form" : "#tab-chat").focus();
     }
   });
 
@@ -197,9 +197,14 @@
   }
   chatInput.addEventListener("input", autoGrow);
 
-  // ---------- Formulários estruturados ----------
-  // Por enquanto o formulário monta uma mensagem no formato que o parser do backend
-  // já entende. Quando existir um endpoint com campos estruturados, troque aqui.
+  // ---------- Simulação (valores técnicos) ----------
+  function setSim(domain) {
+    state.sim = domain;
+    $$(".sim-switch button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.sim === domain)));
+    $$(".data-form").forEach((f) => (f.hidden = f.dataset.domain !== domain));
+  }
+  $$(".sim-switch button").forEach((b) => b.addEventListener("click", () => setSim(b.dataset.sim)));
+
   const BUILDERS = {
     fire: (v) =>
       `Localização: ${v.loc}; fogo ativo: ${v.active}; vento: ${v.wind} km/h; direção do vento: ${v.dir}; ` +
@@ -232,20 +237,21 @@
       }
       errorBox.hidden = true;
       const values = Object.fromEntries(new FormData(form));
-      values.loc = values.loc.replace(/[;.!?\n]/g, " ").trim(); // evita cortar o nome do local
-      send(BUILDERS[form.dataset.domain](values), { resetHistory: true });
+      values.loc = values.loc.replace(/[;.!?\n]/g, " ").trim();
+      send(BUILDERS[form.dataset.domain](values), { mode: "manual", domain: form.dataset.domain, resetHistory: true });
     });
     form.addEventListener("input", (e) => e.target.removeAttribute("aria-invalid"));
   });
 
-  // ---------- Resultado ----------
+  // ---------- Painel de resultado ----------
   function clearResult() {
+    state.shown = [];
+    $("#result-switch").hidden = true;
     $("#result-title").textContent = "Nenhuma análise ainda";
-    setBadge("", "Aguardando cenário");
+    setBadge("", "Aguardando cidade");
     setGauge(null);
-    $("#probs").hidden = true;
-    $("#findings-block").hidden = true;
-    $("#actions-block").hidden = true;
+    $("#gauge").hidden = false;
+    for (const id of ["#probs", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
     $("#reset-btn").hidden = true;
   }
 
@@ -255,7 +261,7 @@
     badge.textContent = RISK_ORDER.includes(risk) ? `Risco ${risk.toLowerCase()}` : text;
   }
 
-  function setGauge(score, level) {
+  function setGauge(score, level, caption) {
     const gauge = $("#gauge");
     const needle = $("#gauge-needle");
     $$(".zone", gauge).forEach((z) => z.classList.toggle("on", z.dataset.zone === level));
@@ -263,27 +269,57 @@
       gauge.classList.remove("has-value");
       needle.style.left = "0%";
       $("#gauge-value").textContent = "–";
-      $("#gauge-caption").textContent = "O índice de 0 a 100 aparece aqui quando todos os dados forem reunidos.";
+      $("#gauge-caption").textContent = caption || "Diga a sua cidade no chat. O índice de 0 a 100 aparece aqui.";
       return;
     }
     gauge.classList.add("has-value");
     needle.style.left = `${Math.max(0, Math.min(100, score))}%`;
     $("#gauge-value").textContent = score;
-    $("#gauge-caption").textContent = "Índice demonstrativo calculado pela rede neural a partir dos dados informados.";
+    $("#gauge-caption").textContent = caption || "Índice calculado pela rede neural do Oliver.";
+  }
+
+  function showReports(list) {
+    state.shown = list;
+    const sw = $("#result-switch");
+    sw.replaceChildren();
+    sw.hidden = list.length < 2;
+    list.forEach((r, i) => {
+      sw.append(el("button", {
+        type: "button", role: "tab", className: "chip",
+        textContent: `${cap(DOMAIN_LABEL[r.domain] || "análise")} · ${r.overall_risk}`,
+        dataset: { risk: r.overall_risk },
+        onclick: () => selectReport(i),
+      }));
+    });
+    selectReport(0);
+  }
+
+  function selectReport(i) {
+    const r = state.shown[i];
+    $$("#result-switch .chip").forEach((c, j) => c.setAttribute("aria-selected", String(i === j)));
+    if (r) renderResult(r);
   }
 
   function renderResult(data) {
     const findings = Array.isArray(data.findings) ? data.findings : [];
-    const label = DOMAIN_LABEL[data.domain] || "análise";
+    const isPanorama = data.domain === "panorama";
+    document.body.dataset.domain = data.domain === "flood" ? "flood" : "fire";
 
     $("#result-title").textContent = data.complete
-      ? `Risco de ${label}${data.location ? " · " + data.location : ""}`
-      : data.domain ? `Coletando dados · ${label}` : "Nenhuma análise ainda";
+      ? `${TITLES[data.domain] || "Análise"}${data.location && !isPanorama ? " · " + data.location : ""}`
+      : "Coletando dados";
     setBadge(data.overall_risk, data.overall_risk || "Aguardando");
 
-    const scoreRow = findings.find((f) => /^Risco estimado/.test(f.metric));
-    const score = scoreRow ? parseInt(String(scoreRow.value), 10) : null;
-    setGauge(Number.isFinite(score) ? score : null, data.overall_risk);
+    if (isPanorama) {
+      const c = data.regional.contagem || {};
+      $("#gauge").hidden = true;
+      setGauge(null, null, `${c.Alto || 0} municípios com risco alto, ${c.Moderado || 0} com risco moderado e ${c.Baixo || 0} com risco baixo de propagação de fogo. ${data.regional.focos_24h} focos de calor nas últimas 24 h.`);
+    } else {
+      $("#gauge").hidden = false;
+      const scoreRow = findings.find((f) => /^Risco estimado/.test(f.metric));
+      const sc = scoreRow ? parseInt(String(scoreRow.value), 10) : null;
+      setGauge(Number.isFinite(sc) ? sc : null, data.overall_risk);
+    }
 
     // Probabilidades
     const probRows = findings.filter((f) => /^Probabilidade/.test(f.metric));
@@ -304,17 +340,15 @@
 
     // Tabela de dados
     const tableRows = findings.filter((f) => !/^Probabilidade|^Risco estimado/.test(f.metric));
+    $("#findings-block h3").textContent = isPanorama ? "Municípios com maior risco de fogo agora" : "Dados usados na análise";
     const tbody = $("#findings");
     tbody.replaceChildren();
     for (const row of tableRows) {
       const missing = row.value === "Não informado";
-      const status = missing ? "Falta informar"
-        : RISK_ORDER.includes(row.risk) ? row.risk
-        : "Recebido";
       tbody.append(el("tr", {}, [
         el("td", {}, [document.createTextNode(row.metric), el("small", { textContent: row.explanation || "" })]),
         el("td", { className: missing ? "missing" : "", textContent: prettyValue(row) }),
-        el("td", {}, el("span", { className: "dot", dataset: { risk: row.risk }, textContent: status })),
+        el("td", {}, el("span", { className: "dot", dataset: { risk: row.risk }, textContent: missing ? "Falta informar" : statusOf(row) })),
       ]));
     }
     $("#findings-block").hidden = tableRows.length === 0;
@@ -324,10 +358,27 @@
     $("#actions").replaceChildren(...actions.map((a) => el("li", { textContent: a })));
     $("#actions-block").hidden = actions.length === 0;
 
-    $("#reset-btn").hidden = !data.domain;
+    // Fontes e mapa (só na análise com dados oficiais)
+    const reg = data.regional;
+    $("#sources-block").hidden = !reg;
+    $("#map-block").hidden = !reg;
+    if (reg) {
+      $("#sources-time").textContent = `Dados coletados em ${reg.dados_de}.`;
+      $("#sources").replaceChildren(...reg.fontes.map((f) => el("li", {}, el("a", { href: f.url, target: "_blank", rel: "noopener", textContent: f.nome }))));
+      showMap(reg, isPanorama);
+    }
+    $("#reset-btn").hidden = !data.complete;
   }
 
-  // Valores que o backend devolve como número, mas que têm nome para o usuário.
+  function statusOf(row) {
+    if (RISK_ORDER.includes(row.risk)) return row.risk;
+    const e = row.explanation || "";
+    if (/Informado por você/.test(e)) return "Você";
+    if (/INPE|INMET|IBGE/.test(e)) return "Oficial";
+    if (/Open-Meteo/.test(e)) return "Complementar";
+    return "Recebido";
+  }
+
   function prettyValue(row) {
     if (row.metric === "Condição da drenagem") {
       return { "0": "Boa", "0.5": "Regular", "1": "Ruim" }[String(row.value).trim()] || row.value;
@@ -335,54 +386,98 @@
     return row.value;
   }
 
+  // ---------- Mapa (Leaflet + OpenStreetMap) ----------
+  let leafletPromise = null, map = null, layer = null;
+  function loadLeaflet() {
+    if (window.L) return Promise.resolve();
+    if (!leafletPromise) {
+      leafletPromise = new Promise((ok, fail) => {
+        document.head.append(el("link", { rel: "stylesheet", href: LEAFLET.css }));
+        const s = el("script", { src: LEAFLET.js });
+        s.onload = ok;
+        s.onerror = () => { leafletPromise = null; fail(new Error("leaflet")); };
+        document.head.append(s);
+      });
+    }
+    return leafletPromise;
+  }
+
+  function utcToBr(s) {
+    if (!s) return "";
+    const d = new Date(s.replace(" ", "T") + "Z");
+    return isNaN(d) ? s : d.toLocaleString("pt-BR", { timeZone: "America/Fortaleza", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function showMap(reg, isPanorama) {
+    const n = reg.focos_proximos.length;
+    $("#map-caption").textContent = isPanorama
+      ? `${reg.focos_48h} focos de calor no Maranhão nas últimas 48 h (INPE). Mapa © colaboradores do OpenStreetMap.`
+      : `${n} foco(s) de calor nas últimas 48 h a até 60 km de ${reg.municipio.nome} (INPE). Mapa © colaboradores do OpenStreetMap.`;
+    try { await loadLeaflet(); } catch { $("#map").textContent = "Não foi possível carregar o mapa agora."; return; }
+    const L = window.L;
+    if (!map) {
+      map = L.map("map", { scrollWheelZoom: false, attributionControl: true });
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 16, attribution: "© OpenStreetMap",
+      }).addTo(map);
+    }
+    if (layer) layer.remove();
+    layer = L.layerGroup().addTo(map);
+    for (const f of reg.focos_proximos) {
+      L.circleMarker([f.lat, f.lon], { radius: 6, color: "#7a2410", weight: 1, fillColor: "#ef6a2b", fillOpacity: 0.85 })
+        .bindPopup(`<b>Foco de calor</b><br>${f.municipio}<br>${utcToBr(f.data)} · ${f.satelite || ""}`)
+        .addTo(layer);
+    }
+    if (isPanorama) {
+      map.fitBounds(MA_BOUNDS);
+    } else {
+      const c = [reg.municipio.lat, reg.municipio.lon];
+      L.circle(c, { radius: 60000, color: "#1e5c86", weight: 1, fill: false, dashArray: "4 6" }).addTo(layer);
+      L.marker(c).bindPopup(`<b>${reg.municipio.nome}</b>`).addTo(layer);
+      map.setView(c, 8);
+    }
+    setTimeout(() => map.invalidateSize(), 50);
+  }
+
   // ---------- Relatório em PDF ----------
-  const OTHER = { fire: "flood", flood: "fire" };
-
-  function missingDomain() {
-    return ["fire", "flood"].find((d) => !state.reports[d]);
-  }
-
-  function reportQuickButtons() {
-    const items = [{ label: "Gerar relatório em PDF", onClick: () => generatePdf() }];
-    const miss = missingDomain();
-    if (miss) items.push({ label: `Analisar também ${DOMAIN_LABEL[miss]}`, onClick: () => setDomain(miss) });
-    return quickButtons(items);
-  }
+  const ORDER = ["fire", "flood", "panorama"];
 
   function updateReport() {
-    const done = ["fire", "flood"].filter((d) => state.reports[d]);
+    const done = ORDER.filter((d) => state.reports[d]);
     $("#report-block").hidden = done.length === 0;
     if (!done.length) return;
-    const list = $("#report-list");
-    list.replaceChildren();
-    for (const d of ["fire", "flood"]) {
-      const r = state.reports[d];
-      list.append(el("li", { className: r ? "ok" : "todo" }, [
-        el("strong", { textContent: DOMAIN_LABEL[d].replace(/^./, (c) => c.toUpperCase()) }),
-        document.createTextNode(r ? ` · ${r.data.location} · risco ${r.data.overall_risk.toLowerCase()}` : " · ainda não analisado"),
-      ]));
-    }
-    const miss = missingDomain();
+    $("#report-list").replaceChildren(...done.map((d) => {
+      const r = state.reports[d].data;
+      return el("li", { className: "ok" }, [
+        el("strong", { textContent: cap(DOMAIN_LABEL[d]) }),
+        document.createTextNode(` · ${r.location} · risco ${r.overall_risk.toLowerCase()}`),
+      ]);
+    }));
+    const miss = state.chat.cidade ? ["fire", "flood"].find((d) => !state.reports[d]) : null;
     const other = $("#other-btn");
     other.hidden = !miss;
     if (miss) other.textContent = `Analisar também ${DOMAIN_LABEL[miss]}`;
-    $("#report-note").textContent = miss
-      ? "Você já pode gerar o PDF. Para um relatório completo, faça também a outra análise."
-      : "As duas análises estão prontas para o relatório.";
+    $("#report-note").textContent = "O relatório traz as análises acima, os dados oficiais usados e as fontes.";
   }
 
   $("#pdf-btn").addEventListener("click", () => generatePdf());
-  $("#other-btn").addEventListener("click", () => { const m = missingDomain(); if (m && !state.busy) setDomain(m); });
+  $("#other-btn").addEventListener("click", () => {
+    const miss = ["fire", "flood"].find((d) => !state.reports[d]);
+    if (miss && !state.busy) send(miss === "flood" ? "Ver também o risco de alagamento" : "Ver também o risco de queimadas");
+  });
 
   // O relatório é uma página A4 montada em HTML e impressa pelo próprio navegador
-  // ("Salvar como PDF"). Funciona offline e não depende de bibliotecas externas.
+  // ("Salvar como PDF"). Funciona sem bibliotecas externas.
   function generatePdf() {
-    if (!Object.keys(state.reports).length) return;
+    if (!Object.keys(state.reports).length) {
+      addMessage("bot", "Ainda não tenho uma análise para colocar no relatório. Me diga a sua cidade primeiro.");
+      return;
+    }
+    if (window.OLIVER_PREVIEW) return showReportPreview();
     const old = document.getElementById("report-frame");
     if (old) old.remove();
     const frame = el("iframe", { id: "report-frame", title: "Relatório para impressão" });
     frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-    if (window.OLIVER_PREVIEW) return showReportPreview();
     document.body.append(frame);
     const doc = frame.contentDocument;
     doc.open(); doc.write(buildReportHtml(state.reports)); doc.close();
@@ -391,13 +486,12 @@
     else frame.addEventListener("load", () => setTimeout(print, 250), { once: true });
   }
 
-  // Na pré-visualização a janela de impressão não abre: mostra o relatório na tela.
   function showReportPreview() {
     let modal = document.getElementById("report-modal");
     if (!modal) {
       modal = el("div", { id: "report-modal", className: "report-modal" }, [
         el("div", { className: "report-modal-bar" }, [
-          el("p", { textContent: "Prévia do relatório. Rodando o projeto (python app.py), este botão abre a janela para salvar em PDF." }),
+          el("p", { textContent: "Prévia do relatório. No site publicado, este botão abre a janela para salvar em PDF." }),
           el("button", { type: "button", className: "ghost-btn", textContent: "Fechar", onclick: () => (modal.hidden = true) }),
         ]),
         el("iframe", { title: "Prévia do relatório" }),
@@ -415,26 +509,40 @@
   }
 
   function buildReportHtml(reports) {
-    const order = ["fire", "flood"].filter((d) => reports[d]);
+    const order = ORDER.filter((d) => reports[d]);
     const now = new Date();
     const fmt = (d) => d.toLocaleString("pt-BR", { dateStyle: "long", timeStyle: "short" });
     const fileName = `oliver-relatorio-${now.toISOString().slice(0, 10)}`;
+    const allSources = new Map();
 
     const summaryRows = order.map((d) => {
       const r = reports[d].data, p = probs(r);
+      const conf = Object.values(p).length ? `${Math.max(...Object.values(p)).toFixed(1)}%` : "–";
+      const idx = d === "panorama" ? "–" : `${score(r)}/100`;
       return `<tr><td>${esc(cap(DOMAIN_LABEL[d]))}</td><td>${esc(r.location || "-")}</td>
         <td><b class="lvl ${esc(r.overall_risk)}">Risco ${esc(r.overall_risk.toLowerCase())}</b></td>
-        <td class="num">${score(r)}/100</td><td class="num">${Math.max(...Object.values(p)).toFixed(1)}%</td></tr>`;
+        <td class="num">${idx}</td><td class="num">${conf}</td></tr>`;
     }).join("");
 
     const sections = order.map((d) => {
       const { data, at } = reports[d];
-      const sc = score(data), p = probs(data), lvl = data.overall_risk;
+      const reg = data.regional;
+      if (reg) for (const f of reg.fontes) allSources.set(f.url, f.nome);
+      const lvl = data.overall_risk;
       const rows = (data.findings || []).filter((f) => !/^Probabilidade|^Risco estimado/.test(f.metric));
+      const p = probs(data), sc = score(data);
+      const focos = reg ? reg.focos_proximos.slice(0, 15) : [];
+      const avisos = reg && reg.avisos ? reg.avisos : [];
       return `
       <section class="analysis ${d}">
-        <h2>Análise de ${esc(DOMAIN_LABEL[d])}</h2>
-        <p class="meta">${esc(data.location || "Local não informado")} · ${esc(fmt(at))}</p>
+        <h2>${esc(TITLES[d])}</h2>
+        <p class="meta">${esc(data.location || "Local não informado")} · análise feita em ${esc(fmt(at))}${reg ? ` · dados coletados em ${esc(reg.dados_de)}` : ""}</p>
+        ${d === "panorama" ? `
+          <p class="lead">${esc(data.reply)}</p>
+          <h3>Municípios com maior risco de propagação de fogo</h3>
+          <table class="data"><thead><tr><th>Posição e município</th><th>Índice</th><th>Focos em 24 h (INPE)</th></tr></thead><tbody>
+          ${reg.ranking.map((r, i) => `<tr><td><b>${i + 1}º · ${esc(r.nome)}</b></td><td><b class="lvl ${esc(r.nivel)}">${r.score}/100 · ${esc(r.nivel.toLowerCase())}</b></td><td>${r.focos_24h}</td></tr>`).join("")}
+          </tbody></table>` : `
         <div class="verdict">
           <div><span class="label">Classificação</span><b class="big lvl ${esc(lvl)}">Risco ${esc(lvl.toLowerCase())}</b></div>
           <div class="gauge-wrap"><span class="label">Índice de risco (0 a 100)</span>
@@ -450,19 +558,26 @@
           <tr><td>${k}</td><td class="num">${(p[k] || 0).toFixed(1)}%</td>
           <td class="barcell"><div class="bar"><i class="${k}" style="width:${p[k] || 0}%"></i></div></td></tr>`).join("")}
         </table>
-        <h3>Dados informados</h3>
-        <table class="data"><thead><tr><th>Item</th><th>Valor</th><th>Observação</th></tr></thead><tbody>
+        <h3>${reg ? "Dados usados e suas fontes" : "Dados informados"}</h3>
+        <table class="data"><thead><tr><th>Item</th><th>Valor</th><th>Fonte / observação</th></tr></thead><tbody>
           ${rows.map((r) => `<tr><td><b>${esc(r.metric)}</b></td><td>${esc(prettyValue(r))}</td><td class="obs">${esc(r.explanation)}</td></tr>`).join("")}
         </tbody></table>
         <h3>Conclusão do Oliver</h3>
-        <p>${esc(data.reply)}</p>
+        <p>${esc(data.reply)}</p>`}
+        ${focos.length && d !== "panorama" ? `
+          <h3>Focos de calor próximos (até 60 km, últimas 48 h · INPE)</h3>
+          <table class="data"><thead><tr><th>Município</th><th>Data e hora</th><th>Satélite</th><th>Coordenadas</th></tr></thead><tbody>
+          ${focos.map((f) => `<tr><td>${esc(f.municipio)}</td><td>${esc(utcToBr(f.data))}</td><td>${esc(f.satelite || "-")}</td><td>${f.lat.toFixed(3)}, ${f.lon.toFixed(3)}</td></tr>`).join("")}
+          </tbody></table>${reg.focos_proximos.length > 15 ? `<p class="note">Mostrando 15 de ${reg.focos_proximos.length} focos.</p>` : ""}` : ""}
+        ${avisos.length ? `<h3>Avisos meteorológicos ativos (INMET)</h3><ul>${avisos.map((a) => `<li><b>${esc(a.evento)}</b>${a.severidade ? ` · ${esc(a.severidade)}` : ""}${a.inicio ? ` · de ${esc(a.inicio)}` : ""}${a.fim ? ` até ${esc(a.fim)}` : ""}</li>`).join("")}</ul>` : ""}
         ${(data.actions || []).length ? `<h3>Recomendações</h3><ul>${data.actions.map((a) => `<li>${esc(a)}</li>`).join("")}</ul>` : ""}
       </section>`;
     }).join("");
 
-    const missingNote = order.length < 2
-      ? `<p class="note">Este relatório inclui apenas a análise de ${esc(DOMAIN_LABEL[order[0]])}. A análise de ${esc(DOMAIN_LABEL[OTHER[order[0]]])} não foi realizada.</p>`
-      : "";
+    const sourcesHtml = allSources.size ? `
+      <h2 class="sec">Fontes dos dados</h2>
+      <ul>${[...allSources].map(([url, nome]) => `<li>${esc(nome)} · ${esc(url)}</li>`).join("")}</ul>
+      <p class="note">Vento e umidade vêm da estação automática do INMET mais próxima (até 80 km) quando ela responde; caso contrário, do Open-Meteo. Chuva das últimas e das próximas 24 horas: Open-Meteo. Dias sem chuva e chuva dos últimos 30 dias: Open-Meteo. Focos de calor e risco de fogo: INPE. Os dados são coletados de hora em hora.</p>` : "";
 
     return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${fileName}</title>
 <style>
@@ -484,10 +599,11 @@
   td.num { text-align: right; white-space: nowrap; width: 22mm; }
   .lvl.Baixo { color: #3e7c4f; } .lvl.Moderado { color: #b8820f; } .lvl.Alto { color: #b23a1a; }
   .note { color: #56655f; font-size: 9pt; }
+  .lead { font-size: 11pt; }
   .analysis { margin-top: 8mm; page-break-before: always; break-before: page; }
   .analysis:first-of-type { page-break-before: auto; break-before: auto; }
   .analysis h2 { font-size: 16pt; padding-left: 4mm; border-left: 2mm solid; }
-  .analysis.fire h2 { color: #b23a1a; border-color: #b23a1a; }
+  .analysis.fire h2, .analysis.panorama h2 { color: #b23a1a; border-color: #b23a1a; }
   .analysis.flood h2 { color: #1e5c86; border-color: #1e5c86; }
   .meta { color: #56655f; margin: 1.5mm 0 5mm; }
   .verdict { display: flex; gap: 10mm; align-items: flex-end; margin-bottom: 4mm; }
@@ -507,7 +623,7 @@
   .bar { height: 3mm; background: #edf0ea; border-radius: 2mm; overflow: hidden; margin-top: 1mm; }
   .bar i { display: block; height: 100%; }
   .bar i.Baixo { background: #3e7c4f; } .bar i.Moderado { background: #b8820f; } .bar i.Alto { background: #b23a1a; }
-  .data td:first-child { width: 48mm; } .data td:nth-child(2) { width: 38mm; }
+  .data td:first-child { width: 48mm; }
   .obs { color: #56655f; font-size: 8.5pt; }
   ul { margin: 1mm 0; padding-left: 5mm; }
   tr, .verdict { page-break-inside: avoid; break-inside: avoid; }
@@ -517,28 +633,28 @@
   footer { margin-top: 8mm; color: #56655f; font-size: 8pt; border-top: 1px solid #c9d1ca; padding-top: 2mm; }
 </style></head><body>
   <div class="cover">
-    <div class="f"><h1>Oliver</h1><p>Relatório de triagem de risco<br>fogo e alagamento</p></div>
+    <div class="f"><h1>Oliver</h1><p>Relatório de risco de queimadas<br>e alagamento · Maranhão</p></div>
     <div class="w"><small>Gerado em</small><b>${esc(fmt(now))}</b><small>${order.length} ${order.length > 1 ? "análises" : "análise"}</small></div>
   </div>
 
   <h2 class="sec">Resumo</h2>
-  <table><thead><tr><th>Cenário</th><th>Local</th><th>Classificação</th><th>Índice</th><th>Confiança</th></tr></thead>
+  <table><thead><tr><th>Análise</th><th>Local</th><th>Classificação</th><th>Índice</th><th>Confiança</th></tr></thead>
   <tbody>${summaryRows}</tbody></table>
-  ${missingNote}
 
   ${sections}
 
   <section class="method">
+    ${sourcesHtml}
     <h2 class="sec">Como o Oliver calcula</h2>
-    <p>O Oliver usa duas redes neurais do tipo perceptron multicamadas (MLP), uma para cada cenário. Cada rede tem uma camada oculta com 10 neurônios (ativação tanh) e uma saída softmax com três classes: baixo, moderado e alto.</p>
-    <p><b>Módulo de fogo:</b> velocidade do vento, umidade relativa, secura da vegetação e declividade, normalizadas entre 0 e 1.<br>
-    <b>Módulo de alagamento:</b> chuva acumulada e prevista em 24 h (até 200 mm), proximidade de rio ou córrego (até 5 km), condição da drenagem e vulnerabilidade do piso.</p>
+    <p>O Oliver usa duas redes neurais do tipo perceptron multicamadas (MLP), uma para cada risco. Cada rede tem uma camada oculta com 10 neurônios (ativação tanh) e uma saída softmax com três classes: baixo, moderado e alto.</p>
+    <p><b>Queimadas:</b> velocidade do vento, umidade relativa do ar, secura da vegetação e declividade do terreno. A secura é o maior valor entre duas estimativas: dias seguidos com menos de 5 mm de chuva (0 dia = 10 %, 45 dias ou mais = 100 %) e chuva dos últimos 30 dias (0 mm = 100 %, 150 mm ou mais = 0 %). A declividade é estimada pela elevação em torno da sede do município.<br>
+    <b>Alagamento:</b> chuva das últimas 24 horas, chuva prevista para as próximas 24 horas, proximidade de rio ou córrego, se a rua costuma alagar (drenagem) e o tipo de imóvel. As três últimas vêm das respostas da pessoa.</p>
     <p>O índice de 0 a 100 combina as probabilidades: 100 × (0,5 × P(moderado) + P(alto)). A classificação é a classe com maior probabilidade, e a confiança é o valor dessa probabilidade.</p>
     <div class="warn">
       <h2>Aviso importante</h2>
-      <p>Protótipo acadêmico (TCC). As redes foram treinadas com 1.400 exemplos sintéticos por cenário, e o resultado depende apenas dos dados informados: não há consulta a satélites, estações meteorológicas, rios ou mapas em tempo real. Este relatório não substitui alertas da Defesa Civil, do INPE, do INMET ou do Cemaden. Em emergência, ligue 193 (Bombeiros) ou 199 (Defesa Civil).</p>
+      <p>Protótipo acadêmico (TCC). As redes neurais foram treinadas com exemplos sintéticos e usam dados públicos do momento da coleta. O resultado é uma triagem e não substitui os alertas da Defesa Civil, do INPE, do INMET ou do Cemaden. Em emergência, ligue 193 (Bombeiros) ou 199 (Defesa Civil).</p>
     </div>
-    <footer>Oliver · Relatório de triagem de risco · protótipo acadêmico</footer>
+    <footer>Oliver · Relatório de risco de queimadas e alagamento · protótipo acadêmico</footer>
   </section>
 </body></html>`;
   }
@@ -559,10 +675,13 @@
 
   $("#reset-btn").addEventListener("click", () => {
     if (state.busy) return;
+    state.chat = {};
     state.history = [];
+    state.reports = {};
     clearResult();
+    updateReport();
     $$(".data-form").forEach((f) => f.reset());
-    addMessage("bot", `Pronto, comecei uma nova análise de ${DOMAIN_LABEL[state.domain] || "risco"}. Envie os dados quando quiser.`);
+    addMessage("bot", "Pronto, comecei uma nova análise. Qual cidade do Maranhão você quer ver?", quickButtons(["Como está o Maranhão hoje?"]));
   });
 
   // ---------- Conta ----------
@@ -577,12 +696,11 @@
   });
 
   // ---------- Início ----------
+  setSim("fire");
+  clearResult();
   addMessage(
     "bot",
-    "Oi, eu sou o Oliver. Posso estimar o risco de propagação de um foco de fogo ou o risco de alagamento de um prédio. Qual cenário você quer avaliar?",
-    quickButtons([
-      { label: "Propagação de fogo", onClick: () => setDomain("fire") },
-      { label: "Alagamento predial", onClick: () => setDomain("flood") },
-    ])
+    "Oi, eu sou o Oliver. Me diga a sua cidade no Maranhão e eu busco os dados do INPE e do INMET para calcular o risco de queimadas ou de alagamento. No fim, você pode baixar um relatório em PDF.",
+    quickButtons(["Risco de queimadas na minha cidade", "Risco de alagamento no meu imóvel", "Como está o Maranhão hoje?"])
   );
 })();

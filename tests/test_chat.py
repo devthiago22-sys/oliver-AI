@@ -6,7 +6,7 @@ from oliver.chat import assistant
 def conversa(mensagens, domain='auto'):
     history, resp = [], None
     for m in mensagens:
-        resp = assistant({'message': m, 'history': history, 'domain': domain})
+        resp = assistant({'message': m, 'history': history, 'domain': domain, 'mode': 'manual'})
         history.append({'role': 'user', 'text': m})
     return resp
 

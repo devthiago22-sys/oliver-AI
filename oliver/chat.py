@@ -200,6 +200,12 @@ def assistant(data):
     message = str(data.get('message', '')).strip()[:12000]
     if not message:
         raise ValueError('Escreva uma mensagem para Oliver.')
+    if data.get('mode') != 'manual':
+        # Conversa principal: a pessoa diz a cidade e o Oliver busca os dados oficiais.
+        from .regional import conversar
+        state = data.get('state') if isinstance(data.get('state'), dict) else {}
+        return conversar(message, state)
+    # Modo manual (aba "Simulação"): a pessoa informa os valores técnicos.
     history = data.get('history', [])
     if not isinstance(history, list):
         history = []
