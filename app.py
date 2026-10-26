@@ -13,7 +13,7 @@ from datetime import timedelta
 from email.message import EmailMessage
 from functools import wraps
 
-from flask import Flask, jsonify, redirect, request, send_from_directory, session
+from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 
 from oliver import auth
 from oliver.chat import assistant
@@ -28,7 +28,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=PRODUCTION,   # no site publicado (HTTPS) o cookie só trafega criptografado
-    MAX_CONTENT_LENGTH=64 * 1024,       # nenhuma requisição precisa de mais que 64 KB
+    MAX_CONTENT_LENGTH=1024 * 1024,     # o maior pedido é o relatório com várias cidades
 )
 
 
@@ -204,6 +204,25 @@ def api_oliver():
         return jsonify(assistant(body()))
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.post('/api/relatorio')
+@login_required_api
+def api_relatorio():
+    """Gera o PDF das análises enviadas e devolve como arquivo para baixar."""
+    from oliver.relatorio import gerar_pdf
+    user = current_user()
+    if too_many(('pdf', user['id']), limit=20, window=600):
+        return jsonify({'error': 'Muitos relatórios em pouco tempo. Espere alguns minutos.'}), 429
+    try:
+        pdf = gerar_pdf(body().get('analises'), usuario=user.get('name'))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    nome = f"oliver-relatorio-{time.strftime('%Y-%m-%d-%H%M')}.pdf"
+    return Response(pdf, mimetype='application/pdf', headers={
+        'Content-Disposition': f'attachment; filename="{nome}"',
+        'Cache-Control': 'no-store',
+    })
 
 
 if __name__ == '__main__':

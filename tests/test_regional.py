@@ -100,6 +100,17 @@ class RegionalTest(unittest.TestCase):
         self.assertEqual(r['reports'][0]['domain'], 'fire')
         self.assertIn('Barra do Corda', r['reply'])
 
+    def test_panorama_depois_de_cidade(self):
+        r = self.conversa(['fogo em são luís', 'Como está o Maranhão hoje?'])
+        self.assertEqual(r['domain'], 'panorama')
+
+    def test_pdf_e_um_pdf(self):
+        from oliver.relatorio import gerar_pdf
+        r = self.conversa(['fogo em são luís e barra do corda'])
+        pdf = gerar_pdf([{'data': x, 'at': '2026-10-26T16:00:00Z'} for x in r['reports']], 'Teste')
+        self.assertTrue(pdf.startswith(b'%PDF'))
+        self.assertGreater(len(pdf), 3000)
+
     def test_os_dois(self):
         r = self.conversa(['são luís', 'Os dois', 'apartamento', 'longe', 'não'])
         self.assertEqual([x['domain'] for x in r['reports']], ['fire', 'flood'])

@@ -646,24 +646,55 @@
     if (miss && !state.busy) send(miss === "flood" ? "Ver também o risco de alagamento" : "Ver também o risco de queimadas");
   });
 
-  // O relatório é uma página A4 montada em HTML e impressa pelo próprio navegador
-  // ("Salvar como PDF"). Funciona sem bibliotecas externas.
-  function generatePdf() {
-    if (!Object.keys(state.reports).length) {
+  // O PDF é gerado no servidor e baixado como arquivo no computador da pessoa.
+  async function generatePdf() {
+    const entries = Object.values(state.reports);
+    if (!entries.length) {
       addMessage("bot", "Ainda não tenho uma análise para colocar no relatório. Me diga a sua cidade primeiro.");
       return;
     }
     if (window.OLIVER_PREVIEW) return showReportPreview();
-    const old = document.getElementById("report-frame");
-    if (old) old.remove();
-    const frame = el("iframe", { id: "report-frame", title: "Relatório para impressão" });
-    frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-    document.body.append(frame);
-    const doc = frame.contentDocument;
-    doc.open(); doc.write(buildReportHtml(state.reports)); doc.close();
-    const print = () => { frame.contentWindow.focus(); frame.contentWindow.print(); };
-    if (doc.readyState === "complete") setTimeout(print, 250);
-    else frame.addEventListener("load", () => setTimeout(print, 250), { once: true });
+    const btn = $("#pdf-btn");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Gerando o PDF…";
+    try {
+      const analises = entries.map(({ data, at }) => {
+        const d = JSON.parse(JSON.stringify(data));
+        if (d.regional && Array.isArray(d.regional.focos_proximos)) {
+          d.regional.total_focos_proximos = d.regional.focos_proximos.length;
+          d.regional.focos_proximos = d.regional.focos_proximos.slice(0, 15);
+        }
+        return { data: d, at: at.toISOString() };
+      });
+      let res;
+      try {
+        res = await fetch("/api/relatorio", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analises }),
+        });
+      } catch { throw new Error("Não consegui falar com o servidor para gerar o PDF. Verifique sua internet e tente de novo."); }
+      if (res.status === 401) { location.href = LOGIN_PAGE; return; }
+      if (!res.ok) {
+        let msg = `O servidor não conseguiu gerar o PDF (erro ${res.status}).`;
+        try { msg = (await res.json()).error || msg; } catch {}
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const nome = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "") || [])[1]
+        || `oliver-relatorio-${new Date().toISOString().slice(0, 10)}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = el("a", { href: url, download: nome });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      addMessage("bot", `Pronto, o relatório foi baixado: ${nome}. Ele fica na pasta de Downloads do seu computador.`);
+    } catch (err) {
+      addError(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
   }
 
   function showReportPreview() {

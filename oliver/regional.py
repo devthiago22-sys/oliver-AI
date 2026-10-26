@@ -99,10 +99,14 @@ def achar_municipios(texto, dados):
     if achados:
         return [cod for _, cod in sorted(achados)], None
 
-    palavras = t.split()
+    # Nomes parecidos: compara só o "miolo" do nome. "do Maranhão" aparece em muitos nomes
+    # e na conversa ("como está o Maranhão"), então não pode contar como semelhança.
+    palavras = [p for p in t.split() if p != 'maranhao']
     melhor, nota = None, 0.0
     for nome, cod in indice_municipios(dados):
-        alvo = nome.strip()
+        alvo = nome.replace(' do maranhao ', ' ').replace(' maranhao ', ' ').strip()
+        if len(alvo) < 4:
+            continue
         n = len(alvo.split())
         for i in range(len(palavras) - n + 1):
             trecho = palavras[i:i + n]
@@ -523,7 +527,7 @@ def conversar(message, state):
     # 3) cidades citadas (exatas ou parecidas)
     if not cidades_msg and not respondeu:
         cidades_msg, sugestao = achar_municipios(message, dados)
-    if not cidades_msg and sugestao:
+    if not cidades_msg and sugestao and not _tem(t, PALAVRAS_PANORAMA):
         state['confirmar'] = sugestao
         nome = dados['municipios'][sugestao]['nome']
         return _pedir(state, f'Não encontrei essa cidade com esse nome. Você quis dizer {nome}?', [f'Sim, {nome}', 'Não'])
