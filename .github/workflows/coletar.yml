@@ -1,0 +1,43 @@
+name: Coletar dados do Maranhão
+
+# Roda de hora em hora (minuto 17) e também pode ser disparado à mão
+# na aba Actions > "Coletar dados do Maranhão" > Run workflow.
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: coletar-dados
+  cancel-in-progress: false
+
+jobs:
+  coletar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Coletar INPE, INMET e Open-Meteo
+        env:
+          INMET_TOKEN: ${{ secrets.INMET_TOKEN }}
+        run: python coletor/coletar.py
+
+      - name: Publicar no branch "dados"
+        run: |
+          mkdir -p /tmp/publicar && cd /tmp/publicar
+          cp "$GITHUB_WORKSPACE/saida/maranhao.json" .
+          printf '# Dados do Oliver\n\nGerado automaticamente pelo workflow "Coletar dados do Maranhão". Não edite à mão.\n' > README.md
+          git init -q -b dados
+          git config user.name "oliver-coletor[bot]"
+          git config user.email "oliver-coletor@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Dados de $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" dados
