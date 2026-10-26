@@ -251,6 +251,12 @@ td small { display: block; color: var(--muted); }
 .report-list li::before { content: ""; flex: none; width: 10px; height: 10px; border-radius: 50%; transform: translateY(1px); }
 .report-list li.ok::before { background: var(--risk-baixo); }
 .report-list li.todo { color: var(--muted); }
+.report-list li > span { flex: 1; min-width: 0; }
+.report-list .remove {
+  flex: none; border: 1px solid var(--line); background: transparent; border-radius: 999px;
+  padding: 2px 10px; font-size: .82rem; color: var(--muted); cursor: pointer;
+}
+.report-list .remove:hover { color: var(--risk-alto); border-color: var(--risk-alto); }
 .report-list li.todo::before { border: 1.5px dashed var(--muted); }
 .report-note { margin: 0 0 12px; color: var(--muted); font-size: .9rem; }
 .report-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

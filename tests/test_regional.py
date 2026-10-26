@@ -86,6 +86,20 @@ class RegionalTest(unittest.TestCase):
         self.assertEqual(r['domain'], 'panorama')
         self.assertEqual(r['regional']['ranking'][0]['nome'], 'Barra do Corda')
 
+    def test_nome_parecido(self):
+        r = self.conversa(['fogo em barra da corda'])
+        self.assertIn('Barra do Corda', r['reply'])
+
+    def test_varias_cidades(self):
+        r = self.conversa(['queimadas em são luís e barra do corda'])
+        self.assertEqual([x['location'] for x in r['reports']], ['São Luís – MA', 'Barra do Corda – MA'])
+
+    def test_lembra_o_assunto_na_cidade_nova(self):
+        r = self.conversa(['fogo em são luís', 'e barra do corda?'])
+        self.assertTrue(r['complete'])
+        self.assertEqual(r['reports'][0]['domain'], 'fire')
+        self.assertIn('Barra do Corda', r['reply'])
+
     def test_os_dois(self):
         r = self.conversa(['são luís', 'Os dois', 'apartamento', 'longe', 'não'])
         self.assertEqual([x['domain'] for x in r['reports']], ['fire', 'flood'])

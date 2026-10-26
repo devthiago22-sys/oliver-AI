@@ -70,18 +70,60 @@ def indice_municipios(dados):
     return _indice
 
 
-def achar_municipio(texto, dados):
+APELIDOS = {' slz ': ' sao luis ', ' ribamar ': ' sao jose de ribamar ', ' imperatris ': ' imperatriz '}
+# Palavras comuns da conversa que nunca devem ser confundidas com nome de cidade.
+PALAVRAS_CONVERSA = set('''risco riscos queimada queimadas fogo fogos incendio alagamento alagamentos enchente chuva cidade
+cidades municipio municipios estado estados maranhao quero saber ver tambem agora hoje como esta qual quais tem perigo
+predio casa imovel relatorio pdf junto juntar ficar substituir adicionar remover tirar sim nao obrigado oi ola bom dia
+tarde noite mais menos perto longe rua andar subsolo terreo apartamento vezes sempre nunca sei'''.split())
+
+
+def achar_municipios(texto, dados):
+    """Encontra os municípios citados no texto.
+
+    Devolve (códigos encontrados em ordem, sugestão). Primeiro procura o nome exato
+    (sem acento e sem maiúsculas); o nome mais longo vence ("São José de Ribamar" antes
+    de "São José"). Se não achar nada, tenta nomes parecidos ("Santo Inês" → Santa Inês):
+    muito parecido é aceito direto; meio parecido volta como sugestão para confirmar.
+    """
+    import difflib
     t = normalizar(texto)
+    for apelido, nome in APELIDOS.items():
+        t = t.replace(apelido, nome)
+    achados, resto = [], t
     for nome, cod in indice_municipios(dados):
-        if nome in t:
-            return cod
-    # apelidos comuns
-    for apelido, nome in ((' sao luis ', ' sao luis '), (' slz ', ' sao luis '), (' ribamar ', ' sao jose de ribamar ')):
-        if apelido in t:
-            for n, cod in indice_municipios(dados):
-                if n == nome:
-                    return cod
-    return None
+        pos = resto.find(nome)
+        if pos >= 0:
+            achados.append((pos, cod))
+            resto = resto[:pos] + ' ' + '#' * (len(nome) - 2) + ' ' + resto[pos + len(nome):]
+    if achados:
+        return [cod for _, cod in sorted(achados)], None
+
+    palavras = t.split()
+    melhor, nota = None, 0.0
+    for nome, cod in indice_municipios(dados):
+        alvo = nome.strip()
+        n = len(alvo.split())
+        for i in range(len(palavras) - n + 1):
+            trecho = palavras[i:i + n]
+            if all(p in PALAVRAS_CONVERSA for p in trecho):
+                continue
+            janela = ' '.join(trecho)
+            if abs(len(janela) - len(alvo)) > 3:
+                continue
+            r = difflib.SequenceMatcher(None, janela, alvo).ratio()
+            if r > nota:
+                melhor, nota = cod, r
+    if melhor and nota >= 0.88:
+        return [melhor], None
+    if melhor and nota >= 0.75 and len(dados['municipios'][melhor]['nome']) >= 5:
+        return [], melhor
+    return [], None
+
+
+def achar_municipio(texto, dados):
+    cods, _ = achar_municipios(texto, dados)
+    return cods[0] if cods else None
 
 
 def compasso(graus):
@@ -408,87 +450,124 @@ def _pedir(state, texto, opcoes=None):
             'overall_risk': 'Aguardando dados', 'findings': [], 'actions': []}
 
 
+def _nomes(cods, dados):
+    nomes = [dados['municipios'][c]['nome'] for c in cods]
+    return nomes[0] if len(nomes) == 1 else ', '.join(nomes[:-1]) + ' e ' + nomes[-1]
+
+
 def conversar(message, state):
     state = dict(state or {})
     state.setdefault('alagamento', {})
+    if state.get('cidade') and not state.get('cidades'):
+        state['cidades'] = [state['cidade']]
     dados = carregar_dados()
     if not dados:
         return _pedir(state, 'Não consegui carregar os dados oficiais agora. Tente de novo em alguns minutos.')
     t = normalizar(message)
+    cidades_msg, sugestao = [], None
 
-    # 1) resposta a uma pergunta pendente sobre o imóvel
+    # 1) confirmação de um nome parecido ("Você quis dizer Santa Inês?")
+    confirmar = state.pop('confirmar', None)
+    if confirmar:
+        if _tem(t, (' sim', ' isso', ' essa', ' exato', ' pode ser', ' certo', ' ela ')):
+            cidades_msg = [confirmar]
+        elif _tem(t, (' nao ',)) and not achar_municipios(message, dados)[0]:
+            return _pedir(state, 'Tudo bem. Escreva o nome da cidade do Maranhão do jeito que ela é chamada oficialmente.')
+
+    # 2) resposta a uma pergunta pendente sobre o imóvel
     campo = state.get('aguardando')
-    if campo:
+    respondeu = False
+    if campo and not cidades_msg:
         valor = PARSERS[campo](t)
         if valor:
             state['alagamento'][campo] = valor
             state['aguardando'] = None
-        elif not (achar_municipio(message, dados) or _intencao(t) or _tem(t, PALAVRAS_PANORAMA)):
+            respondeu = True
+        elif not (achar_municipios(message, dados)[0] or _intencao(t) or _tem(t, PALAVRAS_PANORAMA)):
             return _pergunta(state, campo, 'Não entendi. Pode escolher uma das opções?')
 
-    # 2) panorama do estado
-    cidade_msg = achar_municipio(message, dados) if not campo or state.get('aguardando') else None
-    if _tem(t, PALAVRAS_PANORAMA) and not cidade_msg:
+    # 3) cidades citadas (exatas ou parecidas)
+    if not cidades_msg and not respondeu:
+        cidades_msg, sugestao = achar_municipios(message, dados)
+    if not cidades_msg and sugestao:
+        state['confirmar'] = sugestao
+        nome = dados['municipios'][sugestao]['nome']
+        return _pedir(state, f'Não encontrei essa cidade com esse nome. Você quis dizer {nome}?', [f'Sim, {nome}', 'Não'])
+
+    # 4) panorama do estado
+    if _tem(t, PALAVRAS_PANORAMA) and not cidades_msg:
         r = panorama(dados)
-        r['state'] = {'alagamento': {}}
+        r['state'] = {'alagamento': {}, 'intencao': state.get('intencao')}
         r['options'] = ['Ver a minha cidade']
         return r
 
-    # 3) cidade e intenção
-    if cidade_msg and cidade_msg != state.get('cidade'):
-        state['cidade'] = cidade_msg
-        state['alagamento'] = {}
-        state['aguardando'] = None
-    respondeu = bool(campo) and state.get('aguardando') is None
+    outro_estado = _tem(t, OUTROS_ESTADOS)
+    if cidades_msg and cidades_msg != state.get('cidades'):
+        if set(cidades_msg) != set(state.get('cidades') or []):
+            state['alagamento'] = {}      # outra cidade, outro imóvel
+            state['aguardando'] = None
+        state['cidades'] = cidades_msg
     nova = None if respondeu else _intencao(t)
     if nova:
         state['intencao'] = nova
 
-    if not state.get('cidade'):
-        if _tem(t, OUTROS_ESTADOS):
+    if not state.get('cidades'):
+        if outro_estado:
             return _pedir(state, 'Por enquanto eu analiso só os municípios do Maranhão. Qual cidade do Maranhão você quer ver?')
         if ' maranhao ' in t:
             r = panorama(dados)
             r['state'] = state
             r['options'] = ['Ver a minha cidade']
             return r
-        return _pedir(state, 'Para eu buscar os dados oficiais, me diga a cidade do Maranhão. Por exemplo: "Barra do Corda" ou "Imperatriz".',
-                      ['Como está o Maranhão hoje?'])
+        return _pedir(state, 'Para eu buscar os dados oficiais, me diga a cidade do Maranhão. Por exemplo: "Barra do Corda" ou "Imperatriz". '
+                             'Você pode citar mais de uma cidade.', ['Como está o Maranhão hoje?'])
+    cods = state['cidades']
     if not state.get('intencao'):
-        nome = dados['municipios'][state['cidade']]['nome']
-        return _pedir(state, f'Certo, {nome}. Você quer saber o risco de queimadas, de alagamento ou os dois?',
+        return _pedir(state, f'Certo, {_nomes(cods, dados)}. Você quer saber o risco de queimadas, de alagamento ou os dois?',
                       ['Queimadas', 'Alagamento', 'Os dois'])
 
-    # 4) perguntas do imóvel (só para alagamento)
+    # 5) perguntas do imóvel (só para alagamento)
     if state['intencao'] in ('flood', 'both'):
         for campo in ('imovel', 'rio', 'rua'):
             if campo not in state['alagamento']:
                 pref = ''
                 if campo == 'imovel':
-                    pref = 'Para o alagamento, preciso saber três coisas simples sobre o imóvel.'
+                    onde = f' em {_nomes(cods, dados)}' if len(cods) == 1 else ''
+                    pref = f'Para o alagamento{onde}, preciso saber três coisas simples sobre o imóvel.'
+                    if len(cods) > 1:
+                        pref += ' Vou usar as mesmas respostas para todas as cidades.'
                 return _pergunta(state, campo, pref)
 
-    # 5) análise
-    cod = state['cidade']
-    relatorios = []
-    if state['intencao'] in ('fire', 'both'):
-        r = analise_fogo(cod, dados)
-        if r:
-            relatorios.append(r)
-    if state['intencao'] in ('flood', 'both'):
-        r = analise_alagamento(cod, dados, state['alagamento'])
-        if r:
-            relatorios.append(r)
-    nome = dados['municipios'][cod]['nome']
+    # 6) análise de cada cidade
+    relatorios, sem_dados = [], []
+    for cod in cods:
+        feitos = 0
+        if state['intencao'] in ('fire', 'both'):
+            r = analise_fogo(cod, dados)
+            if r:
+                relatorios.append(r)
+                feitos += 1
+        if state['intencao'] in ('flood', 'both'):
+            r = analise_alagamento(cod, dados, state['alagamento'])
+            if r:
+                relatorios.append(r)
+                feitos += 1
+        if not feitos:
+            sem_dados.append(cod)
     if not relatorios:
-        return _pedir({'cidade': cod, 'alagamento': {}},
-                      f'Os dados de clima de {nome} não estão disponíveis agora. Tente de novo em alguns minutos.')
+        return _pedir({'cidades': cods, 'alagamento': {}, 'intencao': state['intencao']},
+                      f'Os dados de clima de {_nomes(cods, dados)} não estão disponíveis agora. Tente de novo em alguns minutos.')
     texto = ' '.join(r['reply'] for r in relatorios)
+    if sem_dados:
+        texto += f' Não há dados de clima de {_nomes(sem_dados, dados)} agora.'
+    if outro_estado:
+        texto += ' Cidades de outros estados ficaram de fora: por enquanto eu analiso só o Maranhão.'
     texto += f" Dados atualizados em {data_br(dados.get('gerado_em', ''))}."
     outro = {'fire': 'Ver também o risco de alagamento', 'flood': 'Ver também o risco de queimadas'}.get(state['intencao'])
     opcoes = ['Gerar relatório em PDF'] + ([outro] if outro else []) + ['Como está o Maranhão hoje?']
-    niveis = [r['overall_risk'] for r in relatorios]
-    pior = max(niveis, key=lambda n: ('Baixo', 'Moderado', 'Alto').index(n))
-    return {'domain': 'regional', 'complete': True, 'reply': texto, 'reports': relatorios, 'location': f'{nome} – MA',
-            'overall_risk': pior, 'options': opcoes, 'state': {'cidade': cod, 'alagamento': state['alagamento'] if state['intencao'] != 'fire' else {}},
+    pior = max((r['overall_risk'] for r in relatorios), key=lambda n: ('Baixo', 'Moderado', 'Alto').index(n))
+    return {'domain': 'regional', 'complete': True, 'reply': texto, 'reports': relatorios,
+            'location': ', '.join(r['location'] for r in relatorios), 'overall_risk': pior, 'options': opcoes,
+            'state': {'cidades': cods, 'cidade': cods[-1], 'intencao': state['intencao'],
+                      'alagamento': state['alagamento'] if state['intencao'] != 'fire' else {}},
             'findings': [], 'actions': []}

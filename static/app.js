@@ -25,7 +25,7 @@
     busy: false,
     chat: {},          // estado da conversa regional (cidade, perguntas respondidas)
     history: [],       // histórico só para a simulação manual
-    reports: {},       // fire / flood / panorama → { data, at }
+    reports: {},       // "fire:2111300", "flood:2111300", "panorama:21"… → { data, at }, na ordem em que entraram
     shown: [],         // relatórios mostrados no painel agora
     sim: "fire",
   };
@@ -75,13 +75,14 @@
     return li;
   }
 
-  function quickButtons(labels) {
+  function quickButtons(items) {
     const box = el("div", { className: "quick" });
-    for (const label of labels) {
-      box.append(el("button", {
-        type: "button", textContent: label,
-        onclick: () => (label === PDF_OPTION ? generatePdf() : send(label)),
-      }));
+    for (const item of items) {
+      const label = typeof item === "string" ? item : item.label;
+      const action = typeof item === "string"
+        ? () => (label === PDF_OPTION ? generatePdf() : send(label))
+        : item.onClick;
+      box.append(el("button", { type: "button", textContent: label, onclick: action }));
     }
     return box;
   }
@@ -138,11 +139,21 @@
     const reports = Array.isArray(data.reports) ? data.reports
       : data.complete && ["fire", "flood", "panorama"].includes(data.domain) ? [data] : [];
     const at = new Date();
-    for (const r of reports) state.reports[r.domain] = { data: r, at };
+    const cidadesAntes = citiesInReport();
+    for (const r of reports) {
+      const k = keyOf(r);
+      delete state.reports[k];          // a mesma análise de novo substitui a antiga e vai para o fim
+      state.reports[k] = { data: r, at };
+    }
 
     let options = Array.isArray(data.options) ? [...data.options] : [];
     if (reports.length && !options.includes(PDF_OPTION)) options.unshift(PDF_OPTION);
     addMessage("bot", data.reply, options.length ? quickButtons(options) : null);
+
+    // Cidade nova e já havia outras no relatório: juntar tudo ou ficar só com a nova?
+    const novas = [...new Set(reports.filter((r) => r.domain !== "panorama").map(cityOf))];
+    const antigas = cidadesAntes.filter((c) => !novas.includes(c));
+    if (novas.length && antigas.length) askMerge(novas, antigas);
 
     if (reports.length) {
       showReports(reports);
@@ -153,6 +164,37 @@
     } else if (mode === "manual" && data.findings && data.findings.length) {
       showReports([data]);
     }
+  }
+
+  // ---------- Relatório com várias cidades ----------
+  function keyOf(r) {
+    const cod = r.regional && r.regional.municipio ? r.regional.municipio.codigo : r.location || "";
+    return `${r.domain}:${cod}`;
+  }
+  function cityOf(r) { return (r.location || "").replace(/ – MA$/, ""); }
+  function citiesInReport() {
+    return [...new Set(Object.values(state.reports).map((x) => x.data).filter((r) => r.domain !== "panorama").map(cityOf))];
+  }
+  function listar(nomes) {
+    return nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(", ")} e ${nomes[nomes.length - 1]}`;
+  }
+
+  function askMerge(novas, antigas) {
+    const box = quickButtons([
+      { label: "Juntar tudo no mesmo relatório", onClick: () => {
+        box.remove();
+        addMessage("bot", `Combinado. O relatório vai ter ${listar(citiesInReport())}. Você pode tirar uma cidade a qualquer momento no quadro "Relatório em PDF".`);
+      } },
+      { label: `Ficar só com ${listar(novas)}`, onClick: () => {
+        box.remove();
+        for (const [k, v] of Object.entries(state.reports)) {
+          if (v.data.domain !== "panorama" && !novas.includes(cityOf(v.data))) delete state.reports[k];
+        }
+        updateReport();
+        addMessage("bot", `Pronto, tirei ${listar(antigas)}. O relatório agora tem só ${listar(novas)}.`);
+      } },
+    ]);
+    addMessage("bot", `Você já tinha analisado ${listar(antigas)}. Quer juntar com ${listar(novas)} num relatório só, ou ficar só com ${listar(novas)}?`, box);
   }
 
   function setBusy(busy) {
@@ -286,7 +328,7 @@
     list.forEach((r, i) => {
       sw.append(el("button", {
         type: "button", role: "tab", className: "chip",
-        textContent: `${cap(DOMAIN_LABEL[r.domain] || "análise")} · ${r.overall_risk}`,
+        textContent: `${list.length > 1 && r.domain !== "panorama" ? cityOf(r) + " · " : ""}${cap(DOMAIN_LABEL[r.domain] || "análise")} · ${r.overall_risk}`,
         dataset: { risk: r.overall_risk },
         onclick: () => selectReport(i),
       }));
@@ -441,29 +483,36 @@
   }
 
   // ---------- Relatório em PDF ----------
-  const ORDER = ["fire", "flood", "panorama"];
-
   function updateReport() {
-    const done = ORDER.filter((d) => state.reports[d]);
-    $("#report-block").hidden = done.length === 0;
-    if (!done.length) return;
-    $("#report-list").replaceChildren(...done.map((d) => {
-      const r = state.reports[d].data;
+    const keys = Object.keys(state.reports);
+    $("#report-block").hidden = keys.length === 0;
+    if (!keys.length) return;
+    $("#report-list").replaceChildren(...keys.map((k) => {
+      const r = state.reports[k].data;
+      const nome = r.domain === "panorama" ? "Panorama do Maranhão" : `${cityOf(r)} · ${DOMAIN_LABEL[r.domain]}`;
       return el("li", { className: "ok" }, [
-        el("strong", { textContent: cap(DOMAIN_LABEL[d]) }),
-        document.createTextNode(` · ${r.location} · risco ${r.overall_risk.toLowerCase()}`),
+        el("span", {}, [el("strong", { textContent: nome }), document.createTextNode(` · risco ${r.overall_risk.toLowerCase()}`)]),
+        el("button", {
+          type: "button", className: "remove", textContent: "Tirar", title: `Tirar ${nome} do relatório`,
+          onclick: () => { delete state.reports[k]; updateReport(); },
+        }),
       ]);
     }));
-    const miss = state.chat.cidade ? ["fire", "flood"].find((d) => !state.reports[d]) : null;
+    const cods = state.chat.cidades || [];
+    const miss = cods.length ? ["fire", "flood"].find((d) => cods.some((c) => !state.reports[`${d}:${c}`])) : null;
     const other = $("#other-btn");
     other.hidden = !miss;
     if (miss) other.textContent = `Analisar também ${DOMAIN_LABEL[miss]}`;
-    $("#report-note").textContent = "O relatório traz as análises acima, os dados oficiais usados e as fontes.";
+    const n = citiesInReport().length;
+    $("#report-note").textContent = n > 1
+      ? `O relatório vai juntar ${n} cidades, com os dados oficiais usados e as fontes. Use "Tirar" para deixar alguma de fora.`
+      : "O relatório traz as análises acima, os dados oficiais usados e as fontes.";
   }
 
   $("#pdf-btn").addEventListener("click", () => generatePdf());
   $("#other-btn").addEventListener("click", () => {
-    const miss = ["fire", "flood"].find((d) => !state.reports[d]);
+    const cods = state.chat.cidades || [];
+    const miss = ["fire", "flood"].find((d) => cods.some((c) => !state.reports[`${d}:${c}`]));
     if (miss && !state.busy) send(miss === "flood" ? "Ver também o risco de alagamento" : "Ver também o risco de queimadas");
   });
 
@@ -510,14 +559,14 @@
   }
 
   function buildReportHtml(reports) {
-    const order = ORDER.filter((d) => reports[d]);
+    const entries = Object.values(reports);
     const now = new Date();
     const fmt = (d) => d.toLocaleString("pt-BR", { dateStyle: "long", timeStyle: "short" });
     const fileName = `oliver-relatorio-${now.toISOString().slice(0, 10)}`;
     const allSources = new Map();
 
-    const summaryRows = order.map((d) => {
-      const r = reports[d].data, p = probs(r);
+    const summaryRows = entries.map(({ data: r }) => {
+      const d = r.domain, p = probs(r);
       const conf = Object.values(p).length ? `${Math.max(...Object.values(p)).toFixed(1)}%` : "–";
       const idx = d === "panorama" ? "–" : `${score(r)}/100`;
       return `<tr><td>${esc(cap(DOMAIN_LABEL[d]))}</td><td>${esc(r.location || "-")}</td>
@@ -525,8 +574,8 @@
         <td class="num">${idx}</td><td class="num">${conf}</td></tr>`;
     }).join("");
 
-    const sections = order.map((d) => {
-      const { data, at } = reports[d];
+    const sections = entries.map(({ data, at }) => {
+      const d = data.domain;
       const reg = data.regional;
       if (reg) for (const f of reg.fontes) allSources.set(f.url, f.nome);
       const lvl = data.overall_risk;
@@ -635,7 +684,7 @@
 </style></head><body>
   <div class="cover">
     <div class="f"><h1>Oliver</h1><p>Relatório de risco de queimadas<br>e alagamento · Maranhão</p></div>
-    <div class="w"><small>Gerado em</small><b>${esc(fmt(now))}</b><small>${order.length} ${order.length > 1 ? "análises" : "análise"}</small></div>
+    <div class="w"><small>Gerado em</small><b>${esc(fmt(now))}</b><small>${entries.length} ${entries.length > 1 ? "análises" : "análise"}</small></div>
   </div>
 
   <h2 class="sec">Resumo</h2>
