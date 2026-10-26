@@ -303,6 +303,35 @@ def analise_alagamento(cod, dados, resp):
     return _resultado('flood', m, dados, pred, rows, reply, acoes, fontes=[c.get('fonte_chuva'), 'INMET' if m.get('avisos') else None, 'IBGE'])
 
 
+def grafico_focos(m, dados):
+    """Focos de calor por dia (7 dias): no município e nos municípios vizinhos (sede a até 60 km)."""
+    h = dados.get('historico_focos')
+    if not h or 'historico_focos' not in m:
+        return None
+    vizinhos = [0] * len(h['dias'])
+    nomes = []
+    for cod, outro in dados['municipios'].items():
+        if cod == m['codigo'] or 'historico_focos' not in outro:
+            continue
+        if _dist(m, outro) <= 60:
+            nomes.append(outro['nome'])
+            for i, v in enumerate(outro['historico_focos']):
+                vizinhos[i] += v
+    return {'tipo': 'focos', 'dias': h['dias'],
+            'series': [{'nome': m['nome'], 'valores': m['historico_focos'], 'cor': 'fogo-1'},
+                       {'nome': 'Municípios vizinhos (até 60 km)', 'valores': vizinhos, 'cor': 'fogo-2'}],
+            'vizinhos': sorted(nomes), 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas'}
+
+
+def grafico_chuva(m):
+    c = m.get('clima', {})
+    if not c.get('chuva_7d'):
+        return None
+    return {'tipo': 'chuva', 'dias': c.get('datas_chuva_7d', []),
+            'series': [{'nome': f"Chuva em {m['nome']}", 'valores': c['chuva_7d'], 'cor': 'agua-1'}],
+            'previsao': c.get('chuva_prev_24h'), 'unidade': 'mm', 'fonte': 'Open-Meteo'}
+
+
 def _resultado(domain, m, dados, pred, rows, reply, acoes, fontes):
     perto = [f for f in dados.get('focos', []) if _dist(m, f) <= 60][:150]
     lista_fontes = []
@@ -319,6 +348,8 @@ def _resultado(domain, m, dados, pred, rows, reply, acoes, fontes):
                                 'municipio': dados['municipios'].get(f['municipio'], {}).get('nome', '')} for f in perto],
             'fontes': [{'nome': n, 'url': u} for n, u in lista_fontes],
             'avisos': m.get('avisos', []),
+            'grafico': grafico_focos(m, dados) if domain == 'fire' else grafico_chuva(m),
+            'confianca': {'nivel': pred['level'], 'probabilidades': pred['probabilities']},
         },
     }
 
@@ -366,6 +397,9 @@ def panorama(dados):
             'fontes': [{'nome': n, 'url': u} for n, u in (FONTES['INPE'], FONTES['INMET'], FONTES['Open-Meteo'], FONTES['IBGE'])],
             'contagem': contagem, 'focos_24h': total24, 'focos_48h': total48,
             'ranking': [{'nome': dados['municipios'][cod]['nome'], 'score': s, 'nivel': p['level'], 'focos_24h': h24} for s, h24, cod, p in top],
+            'grafico': ({'tipo': 'focos', 'dias': dados['historico_focos']['dias'], 'unidade': 'focos', 'fonte': 'INPE · BDQueimadas',
+                         'series': [{'nome': 'Maranhão', 'valores': dados['historico_focos']['total_estado'], 'cor': 'fogo-1'}]}
+                        if dados.get('historico_focos') else None),
         },
     }
 

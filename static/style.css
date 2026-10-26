@@ -1,4 +1,6 @@
 :root {
+  --fogo-1: #a8321a; --fogo-2: #c88a3c; --agua-1: #2f7fb8;
+  --chart-grid: #e2e7e2; --chart-axis: #9aa69f; --chart-muted: #56655f; --chart-ink: #1d2b2a; --chart-surface: #f8f9f6;
   --paper: #edf0ea;
   --surface: #f8f9f6;
   --ink: #1d2b2a;
@@ -19,6 +21,8 @@ body[data-domain="flood"] { --accent: #1e5c86; --accent-soft: #d6e4ee; }
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --fogo-1: #d4733f; --fogo-2: #a33f20; --agua-1: #4f9bd4;
+    --chart-grid: #2a3633; --chart-axis: #4a5955; --chart-muted: #9daca6; --chart-ink: #e6ece8; --chart-surface: #1c2523;
     --paper: #141b1a; --surface: #1c2523; --ink: #e6ece8; --muted: #9daca6; --line: #2f3c39;
     --accent: #8fb3a8; --accent-soft: #24302d;
     --risk-baixo: #6fb07f; --risk-moderado: #e0b14a; --risk-alto: #ec7a55;
@@ -238,6 +242,17 @@ td small { display: block; color: var(--muted); }
 .sources-time { margin: 0 0 6px; color: var(--muted); font-size: .9rem; }
 .sources ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: .93rem; }
 .sources a { color: var(--accent); }
+
+/* ---------- Gráfico ---------- */
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-caption { margin: 6px 0 0; color: var(--muted); font-size: .85rem; }
+.chart-table { margin-top: 8px; font-size: .9rem; }
+.chart-table summary { cursor: pointer; color: var(--muted); }
+.chart-table table { margin-top: 6px; font-variant-numeric: tabular-nums; }
+.chart-table td:not(:first-child), .chart-table th:not(:first-child) { text-align: right; }
+.confidence { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); font-size: .92rem; }
+.bar-group:hover rect, .bar-group:hover path { opacity: .82; }
 
 /* ---------- Relatório ---------- */
 .report {

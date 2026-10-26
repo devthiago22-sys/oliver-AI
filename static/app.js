@@ -293,7 +293,7 @@
     setBadge("", "Aguardando cidade");
     setGauge(null);
     $("#gauge").hidden = false;
-    for (const id of ["#probs", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
+    for (const id of ["#chart-block", "#findings-block", "#actions-block", "#map-block", "#sources-block"]) $(id).hidden = true;
     $("#reset-btn").hidden = true;
   }
 
@@ -363,22 +363,8 @@
       setGauge(Number.isFinite(sc) ? sc : null, data.overall_risk);
     }
 
-    // Probabilidades
-    const probRows = findings.filter((f) => /^Probabilidade/.test(f.metric));
-    const probList = $("#prob-list");
-    probList.replaceChildren();
-    for (const row of probRows) {
-      const pct = parseFloat(String(row.value).replace(",", ".")) || 0;
-      const bar = el("i");
-      bar.style.background = `var(--risk-${row.risk.toLowerCase()})`;
-      probList.append(el("li", { className: "prob" }, [
-        el("span", { textContent: row.risk }),
-        el("span", { className: "prob-bar" }, bar),
-        el("span", { className: "prob-val", textContent: `${pct.toFixed(1)}%` }),
-      ]));
-      requestAnimationFrame(() => requestAnimationFrame(() => (bar.style.width = `${pct}%`)));
-    }
-    $("#probs").hidden = probRows.length === 0;
+    // Gráfico dos focos (ou da chuva) e a confiança da rede neural
+    renderChart(data);
 
     // Tabela de dados
     const tableRows = findings.filter((f) => !/^Probabilidade|^Risco estimado/.test(f.metric));
@@ -427,6 +413,150 @@
       return { "0": "Boa", "0.5": "Regular", "1": "Ruim" }[String(row.value).trim()] || row.value;
     }
     return row.value;
+  }
+
+  // ---------- Gráfico (SVG feito à mão: funciona na página e no PDF) ----------
+  const CHART_TITLES = {
+    fire: "Focos de calor por dia",
+    panorama: "Focos de calor no Maranhão por dia",
+    flood: "Chuva por dia",
+  };
+
+  function diaCurto(iso, i, total, tipo) {
+    if (tipo === "focos" && i === total - 1) return "hoje";
+    const [, m, d] = String(iso).split("-");
+    return d && m ? `${d}/${m}` : String(iso);
+  }
+
+  function niceMax(v) {
+    if (v <= 4) return 4;
+    const exp = Math.pow(10, Math.floor(Math.log10(v)));
+    for (const f of [1, 2, 2.5, 5, 10]) if (f * exp >= v) return f * exp;
+    return 10 * exp;
+  }
+
+  function fmtNum(v, unidade) {
+    return unidade === "mm" ? v.toFixed(1).replace(".", ",") : String(Math.round(v));
+  }
+
+  /* Colunas por dia. Duas séries viram colunas empilhadas (município embaixo, vizinhos em cima),
+     com 2 px de folga na cor do fundo entre os segmentos e cantos arredondados só no topo. */
+  function chartSvg(g) {
+    const W = 640, H = 250, ml = 40, mr = 12, mt = g.series.length > 1 ? 40 : 22, mb = 30;
+    const n = g.dias.length;
+    const extra = g.tipo === "chuva" && g.previsao != null ? 1 : 0;
+    const slots = n + extra;
+    const band = (W - ml - mr) / slots;
+    const bw = Math.min(24, band * 0.55);
+    const totals = g.dias.map((_, i) => g.series.reduce((a, s) => a + (s.valores[i] || 0), 0));
+    const max = niceMax(Math.max(1, ...totals, extra ? g.previsao : 0));
+    const y = (v) => mt + (H - mt - mb) * (1 - v / max);
+    const x = (i) => ml + band * i + band / 2;
+    const parts = [];
+
+    // grade e eixo y: 0, metade e máximo (sempre números redondos)
+    for (let k = 0; k <= 2; k++) {
+      const v = (max / 2) * k, yy = y(v);
+      parts.push(`<line x1="${ml}" x2="${W - mr}" y1="${yy}" y2="${yy}" stroke="var(--chart-grid)" stroke-width="1"/>`);
+      parts.push(`<text x="${ml - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="var(--chart-muted)">${(Number.isInteger(v) ? String(v) : fmtNum(v, "mm"))}</text>`);
+    }
+
+    const coluna = (cx, base, topo, cor, arredondar, extraAttr = "") => {
+      const h = base - topo;
+      if (h <= 0.5) return "";
+      const r = arredondar ? Math.min(4, h, bw / 2) : 0;
+      const x0 = cx - bw / 2, x1 = cx + bw / 2;
+      return `<path d="M${x0},${base} V${topo + r} Q${x0},${topo} ${x0 + r},${topo} H${x1 - r} Q${x1},${topo} ${x1},${topo + r} V${base} Z" fill="${cor}" ${extraAttr}/>`;
+    };
+
+    // colunas
+    const pico = totals.indexOf(Math.max(...totals));
+    g.dias.forEach((dia, i) => {
+      let acum = 0;
+      const segs = [];
+      g.series.forEach((s, j) => {
+        const v = s.valores[i] || 0;
+        if (v <= 0) return;
+        const base = y(acum) - (acum > 0 ? 2 : 0);
+        acum += v;
+        segs.push({ base, topo: y(acum), cor: `var(--${s.cor})`, j });
+      });
+      const dica = `${diaCurto(dia, i, n, g.tipo)}: ` + g.series.map((s) => `${s.nome} ${fmtNum(s.valores[i] || 0, g.unidade)} ${g.unidade}`).join(" · ");
+      parts.push(`<g class="bar-group"><title>${esc(dica)}</title>` +
+        `<rect x="${x(i) - band / 2}" y="${mt}" width="${band}" height="${H - mt - mb}" fill="transparent"/>` +
+        segs.map((sg, k) => coluna(x(i), sg.base, sg.topo, sg.cor, k === segs.length - 1)).join("") + `</g>`);
+      // rótulos só no pico e no último dia
+      if ((i === pico || i === n - 1) && totals[i] > 0) {
+        parts.push(`<text x="${x(i)}" y="${y(totals[i]) - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--chart-ink)">${fmtNum(totals[i], g.unidade)}</text>`);
+      }
+      parts.push(`<text x="${x(i)}" y="${H - mb + 18}" text-anchor="middle" font-size="11" fill="var(--chart-muted)">${diaCurto(dia, i, n, g.tipo)}</text>`);
+    });
+
+    // previsão de chuva: coluna hachurada
+    if (extra) {
+      const i = n, v = g.previsao;
+      parts.push(`<defs><pattern id="hachura" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="var(--chart-surface)"/><line x1="0" y1="0" x2="0" y2="6" stroke="var(--agua-1)" stroke-width="3"/></pattern></defs>`);
+      parts.push(`<g class="bar-group"><title>Próximas 24 h (previsão): ${fmtNum(v, "mm")} mm</title>` + coluna(x(i), y(0), y(v), "url(#hachura)", true) + `</g>`);
+      parts.push(`<text x="${x(i)}" y="${y(v) - 6}" text-anchor="middle" font-size="12" font-weight="700" fill="var(--chart-ink)">${fmtNum(v, "mm")}</text>`);
+      parts.push(`<text x="${x(i)}" y="${H - mb + 18}" text-anchor="middle" font-size="11" fill="var(--chart-muted)">próx. 24 h</text>`);
+    }
+
+    // linha de base
+    parts.push(`<line x1="${ml}" x2="${W - mr}" y1="${y(0)}" y2="${y(0)}" stroke="var(--chart-axis)" stroke-width="1"/>`);
+
+    // legenda (duas séries)
+    if (g.series.length > 1) {
+      let lx = ml;
+      g.series.forEach((s) => {
+        parts.push(`<rect x="${lx}" y="8" width="12" height="12" rx="3" fill="var(--${s.cor})"/>`);
+        parts.push(`<text x="${lx + 18}" y="18" font-size="12" fill="var(--chart-ink)">${esc(s.nome)}</text>`);
+        lx += 30 + s.nome.length * 6.6;
+      });
+    }
+    if (totals.every((t) => t === 0) && !(extra && g.previsao > 0)) {
+      parts.push(`<text x="${(ml + W - mr) / 2}" y="${(mt + H - mb) / 2}" text-anchor="middle" font-size="13" fill="var(--chart-muted)">${g.tipo === "chuva" ? "Sem chuva nos últimos 7 dias" : "Nenhum foco de calor nos últimos 7 dias"}</text>`);
+    }
+    const desc = g.tipo === "chuva" ? "Gráfico de colunas da chuva por dia" : "Gráfico de colunas dos focos de calor por dia";
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${desc}" xmlns="http://www.w3.org/2000/svg" font-family="Atkinson Hyperlegible, Arial, sans-serif">${parts.join("")}</svg>`;
+  }
+
+  function chartCaption(g) {
+    if (g.tipo === "chuva") {
+      return `Milímetros de chuva por dia nos últimos 7 dias e a previsão para as próximas 24 horas (coluna listrada). Fonte: ${g.fonte}.`;
+    }
+    const viz = g.vizinhos && g.vizinhos.length ? ` Vizinhos considerados: ${g.vizinhos.slice(0, 8).join(", ")}${g.vizinhos.length > 8 ? ` e mais ${g.vizinhos.length - 8}` : ""}.` : "";
+    return `Locais distintos com fogo detectado por satélite em cada dia. "Hoje" ainda está em andamento. Fonte: ${g.fonte}.${viz}`;
+  }
+
+  function chartTableHtml(g) {
+    const head = `<thead><tr><th>Dia</th>${g.series.map((s) => `<th>${esc(s.nome)}</th>`).join("")}</tr></thead>`;
+    const rows = g.dias.map((d, i) => `<tr><td>${diaCurto(d, i, g.dias.length, g.tipo)}</td>${g.series.map((s) => `<td>${fmtNum(s.valores[i] || 0, g.unidade)}</td>`).join("")}</tr>`);
+    if (g.tipo === "chuva" && g.previsao != null) rows.push(`<tr><td>Próximas 24 h (previsão)</td><td>${fmtNum(g.previsao, "mm")}</td></tr>`);
+    return head + `<tbody>${rows.join("")}</tbody>`;
+  }
+
+  function confiancaTxt(data) {
+    const p = probs(data);
+    const vals = Object.entries(p);
+    if (!vals.length) return "";
+    const [nivel, pct] = vals.sort((a, b) => b[1] - a[1])[0];
+    return `A rede neural classificou como risco ${nivel.toLowerCase()}, com ${pct.toFixed(1).replace(".", ",")}% de confiança.`;
+  }
+
+  function renderChart(data) {
+    const g = data.regional && data.regional.grafico;
+    const conf = data.domain === "panorama" ? "" : confiancaTxt(data);
+    $("#chart-block").hidden = !g && !conf;
+    $("#chart").hidden = !g;
+    $("#chart-caption").hidden = !g;
+    $(".chart-table").hidden = !g;
+    $("#confidence").hidden = !conf;
+    $("#confidence").textContent = conf;
+    $("#chart-title").textContent = g ? CHART_TITLES[data.domain] : "Confiança da rede neural";
+    if (!g) return;
+    $("#chart").innerHTML = chartSvg(g);
+    $("#chart-caption").textContent = chartCaption(g);
+    $("#chart-table").innerHTML = chartTableHtml(g);
   }
 
   // ---------- Mapa (Leaflet + OpenStreetMap) ----------
@@ -589,6 +719,7 @@
         <p class="meta">${esc(data.location || "Local não informado")} · análise feita em ${esc(fmt(at))}${reg ? ` · dados coletados em ${esc(reg.dados_de)}` : ""}</p>
         ${d === "panorama" ? `
           <p class="lead">${esc(data.reply)}</p>
+          ${reg.grafico ? `<h3>${esc(CHART_TITLES.panorama)}</h3><div class="chart">${chartSvg(reg.grafico)}</div><p class="note">${esc(chartCaption(reg.grafico))}</p>` : ""}
           <h3>Municípios com maior risco de propagação de fogo</h3>
           <table class="data"><thead><tr><th>Posição e município</th><th>Índice</th><th>Focos em 24 h (INPE)</th></tr></thead><tbody>
           ${reg.ranking.map((r, i) => `<tr><td><b>${i + 1}º · ${esc(r.nome)}</b></td><td><b class="lvl ${esc(r.nivel)}">${r.score}/100 · ${esc(r.nivel.toLowerCase())}</b></td><td>${r.focos_24h}</td></tr>`).join("")}
@@ -603,11 +734,8 @@
             <div class="scale"><span>0</span><span>50</span><span>100</span></div>
           </div>
         </div>
-        <h3>Probabilidade por classe</h3>
-        <table class="probs">${RISK_ORDER.map((k) => `
-          <tr><td>${k}</td><td class="num">${(p[k] || 0).toFixed(1)}%</td>
-          <td class="barcell"><div class="bar"><i class="${k}" style="width:${p[k] || 0}%"></i></div></td></tr>`).join("")}
-        </table>
+        ${reg && reg.grafico ? `<h3>${esc(CHART_TITLES[d])}</h3><div class="chart">${chartSvg(reg.grafico)}</div><p class="note">${esc(chartCaption(reg.grafico))}</p>` : ""}
+        <p class="conf">${esc(confiancaTxt(data))}</p>
         <h3>${reg ? "Dados usados e suas fontes" : "Dados informados"}</h3>
         <table class="data"><thead><tr><th>Item</th><th>Valor</th><th>Fonte / observação</th></tr></thead><tbody>
           ${rows.map((r) => `<tr><td><b>${esc(r.metric)}</b></td><td>${esc(prettyValue(r))}</td><td class="obs">${esc(r.explanation)}</td></tr>`).join("")}
@@ -632,6 +760,11 @@
     return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${fileName}</title>
 <style>
   @page { size: A4; margin: 16mm 16mm 18mm; }
+  :root { --fogo-1: #a8321a; --fogo-2: #c88a3c; --agua-1: #2f7fb8; --chart-grid: #e2e7e2; --chart-axis: #9aa69f;
+          --chart-muted: #56655f; --chart-ink: #1d2b2a; --chart-surface: #ffffff; }
+  .chart svg { width: 100%; height: auto; display: block; }
+  .chart { break-inside: avoid; page-break-inside: avoid; }
+  .conf { background: #edf0ea; border-radius: 2mm; padding: 2mm 3mm; }
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { margin: 0; font: 10pt/1.5 "Atkinson Hyperlegible", Arial, Helvetica, sans-serif; color: #1d2b2a; }
   h1, h2, h3 { font-family: "Bricolage Grotesque", Arial, Helvetica, sans-serif; margin: 0; line-height: 1.2; }
