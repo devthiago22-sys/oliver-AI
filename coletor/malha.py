@@ -68,6 +68,28 @@ def simplificar(pts, tol):
     return out if len(out) >= 4 else pts[:1] + pts[len(pts) // 3:len(pts) // 3 + 1] + pts[2 * len(pts) // 3:2 * len(pts) // 3 + 1] + pts[:1]
 
 
+def _dentro(pt, anel):
+    x, y = pt
+    c = False
+    for (x1, y1), (x2, y2) in zip(anel, anel[1:]):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            c = not c
+    return c
+
+
+def corrigir_partes(polys):
+    """Algumas fontes gravam ilhas como anéis internos de um polígono só (inválido em SIG).
+    Anel que não está dentro do anel externo vira uma parte própria do MultiPolygon."""
+    novo = []
+    for poly in polys:
+        externo, buracos, ilhas = poly[0], [], []
+        for anel in poly[1:]:
+            (buracos if _dentro(anel[0], externo) else ilhas).append(anel)
+        novo.append([externo] + buracos)
+        novo += [[ilha] for ilha in ilhas]
+    return novo
+
+
 def main():
     for fonte, url in URLS:
         gj = baixar(url)
@@ -92,7 +114,7 @@ def main():
                 if aneis:
                     novo.append(aneis)
             if cod and novo:
-                municipios[cod] = novo
+                municipios[cod] = corrigir_partes(novo)
         if len(municipios) < 200:
             log(f'{fonte}: só {len(municipios)} municípios, tentando a próxima fonte')
             continue
