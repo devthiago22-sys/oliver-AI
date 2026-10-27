@@ -225,6 +225,29 @@ def api_relatorio():
     })
 
 
+@app.post('/api/sig')
+@login_required_api
+def api_sig():
+    """Dados georreferenciados (Shapefile, GeoPackage, GeoJSON, KML ou CSV) para usar em SIG."""
+    from oliver.sig import exportar
+    user = current_user()
+    if too_many(('sig', user['id']), limit=30, window=600):
+        return jsonify({'error': 'Muitos downloads em pouco tempo. Espere alguns minutos.'}), 429
+    data = body()
+    cidades = data.get('cidades') if data.get('escopo') == 'cidades' else None
+    if cidades is not None and (not isinstance(cidades, list) or not all(isinstance(c, str) for c in cidades)):
+        return jsonify({'error': 'Lista de municípios inválida.'}), 400
+    camadas = data.get('camadas') if isinstance(data.get('camadas'), list) else ['municipios', 'focos']
+    try:
+        conteudo, nome, mime = exportar(str(data.get('formato', 'shp')), cidades, camadas)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    return Response(conteudo, mimetype=mime, headers={
+        'Content-Disposition': f'attachment; filename="{nome}"',
+        'Cache-Control': 'no-store',
+    })
+
+
 if __name__ == '__main__':
     print('\n  Oliver rodando em http://127.0.0.1:5000  (Ctrl+C para parar)\n')
     app.run(host='127.0.0.1', port=int(os.environ.get('PORT', 5000)), debug=False)

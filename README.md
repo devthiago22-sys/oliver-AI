@@ -69,6 +69,25 @@ wsgi.py             entrada para servidores WSGI (gunicorn, etc.)
 
 Criados na primeira execução: `oliver.db` (usuários) e `secret.key` (chave das sessões). Não compartilhe esses dois arquivos.
 
+## Dados para SIG (QGIS, ArcGIS, Google Earth)
+
+No site, use o quadro **Dados para SIG** (abaixo do resultado) ou peça no chat, por exemplo: "quero os dados de Caxias em shapefile para o QGIS" ou "Maranhão todo em KML".
+
+| Formato | Arquivo | Para |
+|---|---|---|
+| Shapefile | `.zip` com `.shp .shx .dbf .prj .cpg` | ArcGIS, QGIS |
+| GeoPackage | `.gpkg` (as duas camadas num arquivo) | QGIS, ArcGIS Pro |
+| GeoJSON | `.zip` com um `.geojson` por camada | QGIS, web |
+| KML | `.kml` | Google Earth |
+| CSV | `.zip` com latitude, longitude e geometria WKT | planilhas, QGIS |
+
+Camadas, sempre em WGS 84 (EPSG:4326):
+
+- **municipios**: polígonos dos municípios (malha do IBGE, simplificada a ~150 m) com risco de fogo da rede neural, probabilidades, vento, umidade, chuva, secura, declividade, focos de 24 h, 48 h e 7 dias, avisos do INMET e a sinalização dos próximos 3 meses.
+- **focos**: pontos dos focos de calor das últimas 48 horas (INPE), com data, satélites, número de detecções e intensidade (FRP).
+
+Cada download traz um `LEIAME.txt` com a descrição de todos os campos. Os arquivos são gravados pelo próprio Oliver (`oliver/sig.py`), sem GDAL. A malha vem de `coletor/malha.py` (Actions > "Atualizar malha dos municípios").
+
 ## Publicar na internet (PythonAnywhere, grátis)
 
 O plano gratuito do PythonAnywhere roda Flask e guarda o banco SQLite entre reinícios, então as contas não se perdem.

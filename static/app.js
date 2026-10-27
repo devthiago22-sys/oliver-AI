@@ -148,7 +148,11 @@
 
     let options = Array.isArray(data.options) ? [...data.options] : [];
     if (reports.length && !options.includes(PDF_OPTION)) options.unshift(PDF_OPTION);
+    if (data.sig) {
+      options = data.sig.opcoes.map((o) => ({ label: o.label, onClick: () => baixarSig(o) }));
+    }
     addMessage("bot", data.reply, options.length ? quickButtons(options) : null);
+    if (data.sig && data.sig.auto) baixarSig(data.sig.auto);
 
     // Cidade nova e já havia outras no relatório: juntar tudo ou ficar só com a nova?
     const novas = [...new Set(reports.filter((r) => r.domain !== "panorama").map(cityOf))];
@@ -651,6 +655,7 @@
 
   // ---------- Relatório em PDF ----------
   function updateReport() {
+    updateSig();
     const keys = Object.keys(state.reports);
     $("#report-block").hidden = keys.length === 0;
     if (!keys.length) return;
@@ -683,6 +688,83 @@
     if (miss && !state.busy) send(miss === "flood" ? "Ver também o risco de alagamento" : "Ver também o risco de queimadas");
   });
 
+  // Pede um arquivo ao servidor e salva no computador da pessoa (pasta Downloads).
+  async function baixarArquivo(url, payload) {
+    let res;
+    try {
+      res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    } catch { throw new Error("Não consegui falar com o servidor. Verifique sua internet e tente de novo."); }
+    if (res.status === 401) { location.href = LOGIN_PAGE; throw new Error("Sua sessão expirou. Entre novamente."); }
+    if (!res.ok) {
+      let msg = `O servidor não conseguiu gerar o arquivo (erro ${res.status}).`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const nome = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "") || [])[1] || "oliver";
+    const href = URL.createObjectURL(blob);
+    const a = el("a", { href, download: nome });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 30000);
+    return nome;
+  }
+
+  // ---------- Dados para SIG ----------
+  const SIG_NOMES = { shp: "Shapefile", gpkg: "GeoPackage", geojson: "GeoJSON", kml: "KML", csv: "CSV" };
+
+  function cidadesDaConversa() {
+    const cods = new Set(state.chat.cidades || []);
+    for (const { data } of Object.values(state.reports)) {
+      const c = data.regional && data.regional.municipio && data.regional.municipio.codigo;
+      if (c && c.length === 7) cods.add(c);
+    }
+    return [...cods];
+  }
+  function nomesDaConversa() {
+    return [...new Set(Object.values(state.reports).map((x) => x.data).filter((r) => r.domain !== "panorama").map(cityOf))];
+  }
+
+  function updateSig() {
+    const cods = cidadesDaConversa();
+    const radio = $("#sig-escopo-cidades");
+    radio.disabled = !cods.length;
+    const nomes = nomesDaConversa();
+    $("#sig-cidades-label").textContent = cods.length
+      ? `Municípios desta conversa (${nomes.length ? listar(nomes) : cods.length + " município(s)"})`
+      : "Municípios desta conversa (nenhum ainda)";
+    if (cods.length && !radio.dataset.tocado) radio.checked = true;
+    if (!cods.length) $("#sig-escopo-estado").checked = true;
+  }
+  $("#sig-escopo-cidades").addEventListener("change", (e) => (e.target.dataset.tocado = "1"));
+  $("#sig-escopo-estado").addEventListener("change", () => ($("#sig-escopo-cidades").dataset.tocado = "1"));
+
+  async function baixarSig({ formato, escopo, cidades, camadas }) {
+    const btn = $("#sig-btn");
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Preparando os dados…";
+    try {
+      const nome = await baixarArquivo("/api/sig", { formato, escopo, cidades: cidades || [], camadas: camadas || ["municipios", "focos"] });
+      addMessage("bot", `Pronto, os dados em ${SIG_NOMES[formato]} foram baixados: ${nome}. Dentro vem um arquivo LEIAME explicando cada campo.` +
+        (formato === "kml" ? " Abra no Google Earth com dois cliques." : " No QGIS, arraste o arquivo para a janela do mapa."));
+    } catch (err) {
+      addError(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  $("#sig-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const camadas = $$('#sig-form input[name="camada"]:checked').map((c) => c.value);
+    if (!camadas.length) { addError("Escolha pelo menos uma camada para baixar."); return; }
+    const escopo = $("#sig-escopo-cidades").checked ? "cidades" : "estado";
+    baixarSig({ formato: $("#sig-formato").value, escopo, cidades: escopo === "cidades" ? cidadesDaConversa() : [], camadas });
+  });
+
   // O PDF é gerado no servidor e baixado como arquivo no computador da pessoa.
   async function generatePdf() {
     const entries = Object.values(state.reports);
@@ -704,27 +786,7 @@
         }
         return { data: d, at: at.toISOString() };
       });
-      let res;
-      try {
-        res = await fetch("/api/relatorio", {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ analises }),
-        });
-      } catch { throw new Error("Não consegui falar com o servidor para gerar o PDF. Verifique sua internet e tente de novo."); }
-      if (res.status === 401) { location.href = LOGIN_PAGE; return; }
-      if (!res.ok) {
-        let msg = `O servidor não conseguiu gerar o PDF (erro ${res.status}).`;
-        try { msg = (await res.json()).error || msg; } catch {}
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      const nome = (/filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "") || [])[1]
-        || `oliver-relatorio-${new Date().toISOString().slice(0, 10)}.pdf`;
-      const url = URL.createObjectURL(blob);
-      const a = el("a", { href: url, download: nome });
-      document.body.append(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      const nome = await baixarArquivo("/api/relatorio", { analises });
       addMessage("bot", `Pronto, o relatório foi baixado: ${nome}. Ele fica na pasta de Downloads do seu computador.`);
     } catch (err) {
       addError(err.message);
@@ -949,9 +1011,10 @@
   // ---------- Início ----------
   setSim("fire");
   clearResult();
+  updateSig();
   addMessage(
     "bot",
-    "Oi, eu sou o Oliver. Me diga a sua cidade no Maranhão e eu busco os dados do INPE e do INMET para calcular o risco de queimadas ou de alagamento. No fim, você pode baixar um relatório em PDF.",
+    "Oi, eu sou o Oliver. Me diga a sua cidade no Maranhão e eu busco os dados do INPE e do INMET para calcular o risco de queimadas ou de alagamento. No fim, você pode baixar um relatório em PDF ou os dados para SIG (QGIS, ArcGIS, Google Earth).",
     quickButtons(["Risco de queimadas na minha cidade", "Risco de alagamento no meu imóvel", "Como está o Maranhão hoje?"])
   );
 })();

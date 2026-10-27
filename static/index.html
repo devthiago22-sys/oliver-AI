@@ -218,6 +218,34 @@
         </div>
       </div>
 
+      <div class="sig" id="sig-block">
+        <h3>Dados para SIG</h3>
+        <p class="sig-note">Baixe as camadas georreferenciadas para abrir no QGIS, no ArcGIS ou no Google Earth. Sistema de referência WGS 84 (EPSG:4326).</p>
+        <form id="sig-form" class="sig-form">
+          <fieldset class="sig-field">
+            <legend>Abrangência</legend>
+            <label><input type="radio" name="escopo" value="cidades" id="sig-escopo-cidades"> <span id="sig-cidades-label">Municípios desta conversa</span></label>
+            <label><input type="radio" name="escopo" value="estado" id="sig-escopo-estado" checked> Todo o Maranhão (217 municípios)</label>
+          </fieldset>
+          <fieldset class="sig-field">
+            <legend>Camadas</legend>
+            <label><input type="checkbox" name="camada" value="municipios" id="sig-cam-mun" checked> Municípios (risco, clima e próximos 3 meses)</label>
+            <label><input type="checkbox" name="camada" value="focos" id="sig-cam-focos" checked> Focos de calor das últimas 48 h</label>
+          </fieldset>
+          <div class="sig-row">
+            <label for="sig-formato" class="visually-hidden">Formato</label>
+            <select id="sig-formato" name="formato">
+              <option value="shp">Shapefile (.zip) · ArcGIS e QGIS</option>
+              <option value="gpkg">GeoPackage (.gpkg) · QGIS</option>
+              <option value="geojson">GeoJSON (.zip) · QGIS e web</option>
+              <option value="kml">KML · Google Earth</option>
+              <option value="csv">CSV com coordenadas (.zip)</option>
+            </select>
+            <button type="submit" class="primary-btn" id="sig-btn">Baixar dados para SIG</button>
+          </div>
+        </form>
+      </div>
+
       <button type="button" id="reset-btn" class="ghost-btn" hidden>Nova análise</button>
     </section>
   </main>

@@ -272,6 +272,19 @@ td small { display: block; color: var(--muted); }
 .confidence { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--paper); font-size: .92rem; }
 .bar-group:hover rect, .bar-group:hover path { opacity: .82; }
 
+/* ---------- Dados para SIG ---------- */
+.sig { margin-top: 18px; padding: 16px; border-radius: 14px; border: 1px solid var(--line); }
+.sig h3 { margin-top: 0 !important; }
+.sig-note { margin: 0 0 12px; color: var(--muted); font-size: .9rem; }
+.sig-form { display: grid; gap: 12px; }
+.sig-field { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+.sig-field legend { font-weight: 700; font-size: .92rem; margin-bottom: 4px; padding: 0; }
+.sig-field label { display: flex; gap: 8px; align-items: flex-start; font-size: .93rem; cursor: pointer; }
+.sig-field input { accent-color: var(--accent); margin-top: 3px; }
+.sig-field input:disabled + span { color: var(--muted); }
+.sig-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.sig-row select { flex: 1 1 220px; min-width: 0; padding: 10px 12px; border-radius: 10px; border: 1.5px solid var(--line); background: var(--surface); }
+
 /* ---------- Relatório ---------- */
 .report {
   margin-top: 26px; padding: 16px; border-radius: 14px;

@@ -622,6 +622,39 @@ def _nomes(cods, dados):
     return nomes[0] if len(nomes) == 1 else ', '.join(nomes[:-1]) + ' e ' + nomes[-1]
 
 
+PALAVRAS_SIG = (' sig ', ' gis ', ' qgis', ' arcgis', ' shapefile', ' shp ', ' geojson', ' kml', ' kmz', ' gpkg',
+                ' geopackage', ' georreferenc', ' georeferenc', ' geoespacia', ' camada', ' google earth', ' vetorial',
+                ' coordenadas', ' dados espaciais')
+FORMATOS_SIG = ((' shapefile', 'shp'), (' shp ', 'shp'), (' gpkg', 'gpkg'), (' geopackage', 'gpkg'), (' geojson', 'geojson'),
+                (' kml', 'kml'), (' kmz', 'kml'), (' google earth', 'kml'), (' csv', 'csv'), (' planilha', 'csv'))
+NOMES_SIG = {'shp': 'Shapefile', 'gpkg': 'GeoPackage', 'geojson': 'GeoJSON', 'kml': 'KML (Google Earth)', 'csv': 'CSV'}
+
+
+def _pedido_sig(t, cods, dados, state):
+    formato = next((f for p, f in FORMATOS_SIG if p in t), None)
+    todo = _tem(t, (' maranhao todo', ' todo o maranhao', ' todo maranhao', ' estado todo', ' todos os municipios',
+                    ' estado inteiro', ' maranhao inteiro', ' todo o estado'))
+    escopo = 'cidades' if cods and not todo else 'estado'
+    onde = _nomes(cods, dados) if escopo == 'cidades' else 'todo o Maranhão (217 municípios)'
+    texto = (f'Preparei os dados georreferenciados de {onde} para usar no QGIS, no ArcGIS ou no Google Earth. '
+             'Vêm duas camadas: os municípios (contornos do IBGE, com risco de fogo, clima, focos e a sinalização dos '
+             'próximos 3 meses) e os focos de calor das últimas 48 horas (pontos do INPE). Tudo em WGS 84 (EPSG:4326), '
+             'com um arquivo LEIAME explicando cada campo.')
+    if formato:
+        texto += f' Baixando em {NOMES_SIG[formato]}.'
+    else:
+        texto += ' Escolha o formato:'
+    opcoes = [{'formato': f, 'escopo': escopo, 'cidades': cods if escopo == 'cidades' else [], 'label': f'Baixar em {n}'}
+              for f, n in NOMES_SIG.items()]
+    if escopo == 'cidades':
+        opcoes.append({'formato': formato or 'shp', 'escopo': 'estado', 'cidades': [],
+                       'label': f'Todo o Maranhão em {NOMES_SIG[formato or "shp"]}'})
+    return {'domain': 'regional', 'complete': False, 'reply': texto, 'options': [], 'state': state,
+            'overall_risk': 'Aguardando dados', 'findings': [], 'actions': [],
+            'sig': {'auto': {'formato': formato, 'escopo': escopo, 'cidades': cods if escopo == 'cidades' else []} if formato else None,
+                    'opcoes': opcoes}}
+
+
 def conversar(message, state):
     state = dict(state or {})
     state.setdefault('alagamento', {})
@@ -663,12 +696,16 @@ def conversar(message, state):
     # 3) cidades citadas (exatas ou parecidas)
     if not cidades_msg and not respondeu:
         cidades_msg, sugestao = achar_municipios(message, dados)
-    if not cidades_msg and sugestao and not _tem(t, PALAVRAS_PANORAMA):
+    if not cidades_msg and sugestao and not _tem(t, PALAVRAS_PANORAMA) and not _tem(t, PALAVRAS_SIG):
         state['confirmar'] = sugestao
         nome = dados['municipios'][sugestao]['nome']
         return _pedir(state, f'Não encontrei essa cidade com esse nome. Você quis dizer {nome}?', [f'Sim, {nome}', 'Não'])
 
-    # 4) panorama do estado
+    # 4) dados georreferenciados para SIG
+    if _tem(t, PALAVRAS_SIG) or (' csv' in t and _tem(t, (' dados', ' baixar', ' exportar'))):
+        return _pedido_sig(t, cidades_msg or state.get('cidades') or [], dados, state)
+
+    # 5) panorama do estado
     if _tem(t, PALAVRAS_PANORAMA) and not cidades_msg:
         r = panorama(dados)
         r['state'] = {'alagamento': {}, 'intencao': state.get('intencao')}
