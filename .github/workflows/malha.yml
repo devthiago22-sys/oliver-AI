@@ -1,0 +1,33 @@
+name: Atualizar malha dos municípios
+
+# Baixa os contornos dos municípios do Maranhão (IBGE) usados na exportação para SIG.
+# Rode à mão quando o IBGE publicar uma malha municipal nova.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  malha:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Baixar e simplificar a malha municipal
+        run: python coletor/malha.py
+
+      - name: Salvar no repositório
+        run: |
+          git config user.name "oliver-coletor[bot]"
+          git config user.email "oliver-coletor@users.noreply.github.com"
+          git add oliver/malha_ma.json
+          git diff --cached --quiet && echo "Sem mudanças" && exit 0
+          git commit -m "Atualiza malha dos municípios do Maranhão"
+          git pull --rebase -q origin main
+          git push -q origin HEAD:main
