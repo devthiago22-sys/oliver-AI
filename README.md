@@ -88,7 +88,23 @@ Camadas, sempre em WGS 84 (EPSG:4326):
 
 Cada download traz um `LEIAME.txt` com a descrição de todos os campos. Os arquivos são gravados pelo próprio Oliver (`oliver/sig.py`), sem GDAL. A malha vem de `coletor/malha.py` (Actions > "Atualizar malha dos municípios").
 
-## Publicar na internet (PythonAnywhere, grátis)
+## Publicar na internet (Render + Supabase, grátis)
+
+O site roda no **Render** e as contas ficam num banco Postgres no **Supabase** (projeto `oliver`, São Paulo).
+Cada envio ao GitHub atualiza o site sozinho.
+
+1. Supabase: no projeto `oliver`, clique em **Connect** e copie a *connection string* do **Session pooler**
+   (porta 5432). Troque `[YOUR-PASSWORD]` pela senha do banco (se não souber, defina uma nova em
+   *Project Settings > Database > Reset database password*).
+2. Render: entre com a conta do GitHub em https://render.com, clique em **New > Blueprint**, escolha o
+   repositório `oliver-AI` e, quando pedir `DATABASE_URL`, cole a connection string do passo 1.
+3. Quando o site subir, copie o endereço (algo como `https://oliver-ai.onrender.com`) e cadastre no GitHub em
+   **Settings > Secrets and variables > Actions > Variables** com o nome `OLIVER_SITE_URL`. A partir daí o
+   workflow "Manter o site acordado" visita o site a cada 10 minutos.
+
+Sem `DATABASE_URL`, o Oliver usa SQLite (`oliver.db`), como no computador local e no PythonAnywhere.
+
+## Publicar no PythonAnywhere (alternativa)
 
 O plano gratuito do PythonAnywhere roda Flask e guarda o banco SQLite entre reinícios, então as contas não se perdem.
 

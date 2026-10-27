@@ -1,0 +1,25 @@
+name: Manter o site acordado
+
+# O Render gratuito dorme após 15 min sem visitas. Este workflow visita /saude a cada 10 min,
+# o que também mantém o banco do Supabase ativo (ele pausa após 7 dias sem uso).
+# Endereço do site: variável do repositório OLIVER_SITE_URL (Settings > Secrets and variables > Actions > Variables).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  visitar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Visitar /saude
+        env:
+          SITE: ${{ vars.OLIVER_SITE_URL }}
+        run: |
+          if [ -z "$SITE" ]; then echo "OLIVER_SITE_URL não definida; nada a fazer."; exit 0; fi
+          for i in 1 2 3; do
+            curl -fsS --max-time 90 "$SITE/saude" && exit 0
+            echo "tentativa $i falhou"; sleep 20
+          done
+          exit 1

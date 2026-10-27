@@ -1,0 +1,21 @@
+# Configuração do Render (New > Blueprint > escolher este repositório).
+services:
+  - type: web
+    name: oliver-ai
+    runtime: python
+    plan: free
+    region: virginia
+    branch: main
+    autoDeploy: true
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 2 --threads 2 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /saude
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: OLIVER_ENV
+        value: production
+      - key: OLIVER_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false   # o Render pede na hora de criar: cole a "connection string" do Supabase

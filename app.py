@@ -22,6 +22,10 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC = os.path.join(BASE, 'static')
 
 app = Flask(__name__, static_folder=STATIC, static_url_path='')
+if os.environ.get('RENDER') or os.environ.get('OLIVER_PROXY'):
+    # Atrás do proxy do Render: confia no esquema (https) e no IP informados por ele.
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 app.permanent_session_lifetime = timedelta(days=30)
 PRODUCTION = os.environ.get('OLIVER_ENV') == 'production'
 app.config.update(
@@ -49,8 +53,16 @@ auth.init_db()
 
 
 def current_user():
+    """Usuário da sessão. Nome e e-mail ficam no cookie assinado, sem consultar o banco a cada pedido."""
     uid = session.get('user_id')
-    return auth.get_user(uid) if uid else None
+    if not uid:
+        return None
+    if session.get('user_name'):
+        return {'id': uid, 'name': session['user_name'], 'email': session.get('user_email', '')}
+    user = auth.get_user(uid)
+    if user:
+        session['user_name'], session['user_email'] = user['name'], user['email']
+    return user
 
 
 def login_required_api(view):
@@ -98,6 +110,18 @@ def security_headers(resp):
     return resp
 
 
+# ---------- Saúde (usada pelo GitHub para manter o site e o banco acordados) ----------
+@app.get('/saude')
+def saude():
+    try:
+        auth.ping()
+        banco = 'ok'
+    except Exception as e:  # noqa: BLE001
+        app.logger.error('Banco indisponível: %s', e)
+        banco = 'erro'
+    return jsonify({'site': 'ok', 'banco': banco}), (200 if banco == 'ok' else 503)
+
+
 # ---------- Páginas ----------
 @app.get('/')
 def login_page():
@@ -136,6 +160,7 @@ def api_login():
     user = auth.login(data.get('user'), data.get('password'))
     session.clear()
     session['user_id'] = user['id']
+    session['user_name'], session['user_email'] = user['name'], user['email']
     session.permanent = bool(data.get('remember'))
     return jsonify({'ok': True, 'user': user})
 

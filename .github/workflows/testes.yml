@@ -1,0 +1,43 @@
+name: Testes
+
+# Roda os testes a cada envio ao GitHub: com SQLite e com um Postgres de verdade (como no Supabase).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: teste
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Testes com SQLite
+        run: python -m unittest -v
+      - name: Testes das contas com Postgres
+        env:
+          DATABASE_URL: postgresql://postgres:teste@localhost:5432/postgres
+        run: python -m unittest -v tests.test_auth
+      - name: O servidor de produção carrega o app
+        env:
+          DATABASE_URL: postgresql://postgres:teste@localhost:5432/postgres
+          OLIVER_ENV: production
+          OLIVER_SECRET: teste
+          RENDER: 'true'
+        run: |
+          gunicorn app:app --bind 127.0.0.1:8000 --daemon
+          sleep 4
+          curl -fsS http://127.0.0.1:8000/saude
+          curl -fsS -o /dev/null -w "login: %{http_code}\n" http://127.0.0.1:8000/
